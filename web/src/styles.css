@@ -1,0 +1,101 @@
+:root {
+  --bg: #f7f6f2;
+  --text: #1f252f;
+  --surface: #ffffff;
+  --brand: #145f8d;
+  --brand-soft: #d8edf9;
+  --border: #c7d3de;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Avenir Next", "PingFang SC", sans-serif;
+  color: var(--text);
+  background:
+    radial-gradient(circle at 0% 0%, #ffffff, transparent 40%),
+    radial-gradient(circle at 100% 100%, #dceffc, transparent 45%),
+    var(--bg);
+}
+
+.app-shell {
+  min-height: 100vh;
+  padding: 20px;
+}
+
+.app-header h1 {
+  margin: 0;
+  letter-spacing: 0.02em;
+}
+
+.app-header p {
+  margin: 6px 0 0;
+  color: #526273;
+}
+
+.app-nav {
+  display: flex;
+  gap: 12px;
+  margin: 20px 0;
+}
+
+.app-nav a {
+  text-decoration: none;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 6px 14px;
+  background: rgba(255, 255, 255, 0.85);
+}
+
+.app-nav a.active {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+
+.panel {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 16px;
+  padding: 16px;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.05);
+}
+
+.actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 16px 0;
+}
+
+button {
+  border: 1px solid var(--brand);
+  border-radius: 8px;
+  padding: 8px 14px;
+  color: #ffffff;
+  background: var(--brand);
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.logs {
+  display: grid;
+  gap: 10px;
+}
+
+pre {
+  margin: 0;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid #dde4eb;
+  background: #f8fbff;
+  overflow: auto;
+}
