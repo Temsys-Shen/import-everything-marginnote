@@ -1,6 +1,8 @@
-import dompdf from "dompdf.js";
-import songtiScBlackBase64 from "jspdf-font/fonts/SongtiSCBlack";
-import MNBridge from "../lib/mnBridge";
+import html2canvas from "html2canvas";
+import { jsPDF } from "jspdf";
+import { transferBinaryToBridge } from "./binaryTransferService";
+import { sanitizePdfFileName } from "./exportConfigService";
+import { applyAdaptiveLayout } from "./widthAdaptService";
 
 const BRIDGE_COMMANDS = {
   INIT: "savePdfInit",
@@ -9,23 +11,16 @@ const BRIDGE_COMMANDS = {
   ABORT: "savePdfAbort",
 };
 
-const DEFAULT_MAX_CHUNK_CHARS = 16000;
-const PDF_FONT_FAMILY = "SongtiSCBlack";
+const EXPORT_PAGE_WIDTH = 794;
+const EXPORT_PAGE_HEIGHT = 1123;
 
-const PDF_FONT_CONFIG = [
-  {
-    fontFamily: PDF_FONT_FAMILY,
-    fontBase64: songtiScBlackBase64,
-    fontStyle: "normal",
-    fontWeight: 400,
-  },
-  {
-    fontFamily: PDF_FONT_FAMILY,
-    fontBase64: songtiScBlackBase64,
-    fontStyle: "normal",
-    fontWeight: 700,
-  },
-];
+const QUALITY_PRESET_MAP = {
+  1: { label: "低", scale: 1.0, jpegQuality: 0.58 },
+  2: { label: "较低", scale: 1.25, jpegQuality: 0.68 },
+  3: { label: "标准", scale: 1.5, jpegQuality: 0.78 },
+  4: { label: "较高", scale: 1.75, jpegQuality: 0.86 },
+  5: { label: "高", scale: 2.0, jpegQuality: 0.92 },
+};
 
 function createExportError({ command, chunkIndex = null, message, details = null }) {
   return {
@@ -36,69 +31,163 @@ function createExportError({ command, chunkIndex = null, message, details = null
   };
 }
 
-function sanitizeFileName(name) {
-  const normalized = String(name || "export").replace(/[\\/:*?"<>|]/g, "_");
-  if (normalized.toLowerCase().endsWith(".pdf")) {
-    return normalized;
-  }
-  return `${normalized}.pdf`;
+export function getImageQualityPreset(level) {
+  return QUALITY_PRESET_MAP[level] || QUALITY_PRESET_MAP[3];
 }
 
-function uint8ToBase64(bytes) {
-  const step = 0x8000;
-  const parts = [];
+async function waitForRenderStability() {
+  await new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
+  await new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
 
-  for (let i = 0; i < bytes.length; i += step) {
-    const chunk = bytes.subarray(i, i + step);
-    parts.push(String.fromCharCode(...chunk));
+  if (document.fonts && document.fonts.ready) {
+    try {
+      await document.fonts.ready;
+    } catch (error) {
+      console.log(`[ImportEverything] fonts ready wait failed: ${String(error)}`);
+    }
   }
-
-  return btoa(parts.join(""));
 }
 
-function splitByLength(input, maxLength) {
-  if (!input || input.length === 0) {
-    return [];
-  }
-
-  const result = [];
-  for (let i = 0; i < input.length; i += maxLength) {
-    result.push(input.slice(i, i + maxLength));
-  }
-  return result;
+function createRenderHost() {
+  const host = document.createElement("div");
+  host.style.position = "fixed";
+  host.style.left = "-400vw";
+  host.style.top = "0";
+  host.style.width = `${EXPORT_PAGE_WIDTH}px`;
+  host.style.opacity = "0";
+  host.style.pointerEvents = "none";
+  host.style.zIndex = "-1";
+  host.style.background = "#ffffff";
+  document.body.appendChild(host);
+  return host;
 }
 
-async function generatePdfBlobFromElement(element) {
-  const previousInlineFontFamily = element.style.fontFamily;
-  element.style.fontFamily = PDF_FONT_FAMILY;
+function createPageFrame() {
+  const frame = document.createElement("div");
+  frame.style.position = "relative";
+  frame.style.width = `${EXPORT_PAGE_WIDTH}px`;
+  frame.style.height = `${EXPORT_PAGE_HEIGHT}px`;
+  frame.style.overflow = "hidden";
+  frame.style.background = "#ffffff";
+  return frame;
+}
 
-  let renderResult;
-  try {
-    renderResult = await dompdf(element, {
-      useCORS: true,
-      backgroundColor: "#ffffff",
-      pagination: true,
-      format: "a4",
-      fontConfig: PDF_FONT_CONFIG,
-    });
-  } finally {
-    element.style.fontFamily = previousInlineFontFamily;
+function createPageContent(sourceElement) {
+  const content = sourceElement.cloneNode(true);
+  content.style.width = `${EXPORT_PAGE_WIDTH}px`;
+  content.style.maxWidth = `${EXPORT_PAGE_WIDTH}px`;
+  content.style.margin = "0";
+  content.style.background = "#ffffff";
+  return content;
+}
+
+function clearElementChildren(element) {
+  while (element.firstChild) {
+    element.removeChild(element.firstChild);
   }
+}
 
-  if (renderResult instanceof Blob) {
-    return renderResult;
+function replaceElementChild(element, child) {
+  clearElementChildren(element);
+  element.appendChild(child);
+}
+
+function removeElement(element) {
+  if (element && element.parentNode) {
+    element.parentNode.removeChild(element);
   }
+}
 
-  throw createExportError({
-    command: "generatePdf",
-    message: "dompdf did not return a PDF Blob",
+async function renderPageCanvas(frame, scale) {
+  return html2canvas(frame, {
+    backgroundColor: "#ffffff",
+    scale,
+    useCORS: true,
+    allowTaint: true,
+    logging: false,
+    imageTimeout: 0,
+    width: EXPORT_PAGE_WIDTH,
+    height: EXPORT_PAGE_HEIGHT,
+    windowWidth: EXPORT_PAGE_WIDTH,
+    windowHeight: EXPORT_PAGE_HEIGHT,
+    scrollX: 0,
+    scrollY: 0,
   });
+}
+
+async function generatePdfBytesFromElement(element, imageQualityLevel, onMeasureError, onProgress) {
+  const cleanupAdaptiveLayout = applyAdaptiveLayout(element, {
+    onMeasureError,
+  });
+
+  const renderHost = createRenderHost();
+  const pageFrame = createPageFrame();
+  renderHost.appendChild(pageFrame);
+
+  try {
+    const measuredContent = createPageContent(element);
+    renderHost.appendChild(measuredContent);
+    await waitForRenderStability();
+
+    const totalHeight = Math.max(
+      EXPORT_PAGE_HEIGHT,
+      Math.ceil(measuredContent.getBoundingClientRect().height || measuredContent.scrollHeight || 0),
+    );
+    renderHost.removeChild(measuredContent);
+
+    const totalPages = Math.max(1, Math.ceil(totalHeight / EXPORT_PAGE_HEIGHT));
+    const qualityPreset = getImageQualityPreset(imageQualityLevel);
+    const pdf = new jsPDF({
+      orientation: "p",
+      unit: "px",
+      format: [EXPORT_PAGE_WIDTH, EXPORT_PAGE_HEIGHT],
+      compress: true,
+      hotfixes: ["px_scaling"],
+    });
+
+    for (let pageIndex = 0; pageIndex < totalPages; pageIndex += 1) {
+      if (typeof onProgress === "function") {
+        onProgress({
+          phase: "render",
+          message: `正在生成PDF ${pageIndex + 1}/${totalPages}`,
+          current: pageIndex,
+          total: totalPages,
+          ratioHint: totalPages === 0 ? 0.2 : 0.12 + ((pageIndex / totalPages) * 0.5),
+        });
+      }
+
+      const pageContent = createPageContent(element);
+      pageContent.style.position = "absolute";
+      pageContent.style.left = "0";
+      pageContent.style.top = `${-pageIndex * EXPORT_PAGE_HEIGHT}px`;
+      replaceElementChild(pageFrame, pageContent);
+
+      await waitForRenderStability();
+      const canvas = await renderPageCanvas(pageFrame, qualityPreset.scale);
+      const imageData = canvas.toDataURL("image/jpeg", qualityPreset.jpegQuality);
+
+      if (pageIndex > 0) {
+        pdf.addPage([EXPORT_PAGE_WIDTH, EXPORT_PAGE_HEIGHT], "p");
+      }
+
+      pdf.addImage(imageData, "JPEG", 0, 0, EXPORT_PAGE_WIDTH, EXPORT_PAGE_HEIGHT, undefined, "FAST");
+      canvas.width = 0;
+      canvas.height = 0;
+      clearElementChildren(pageFrame);
+    }
+
+    return new Uint8Array(pdf.output("arraybuffer"));
+  } finally {
+    cleanupAdaptiveLayout();
+    removeElement(renderHost);
+  }
 }
 
 export async function exportMergedPreviewToDocumentPath(options) {
   const {
     rootElement,
     fileName,
+    imageQualityLevel,
     onProgress,
   } = options;
 
@@ -109,106 +198,69 @@ export async function exportMergedPreviewToDocumentPath(options) {
     });
   }
 
-  if (typeof onProgress === "function") {
-    onProgress({ stage: "render", message: "正在使用dompdf.js生成PDF二进制" });
-  }
+  const measureErrors = [];
+  const pdfBytes = await generatePdfBytesFromElement(
+    rootElement,
+    imageQualityLevel,
+    (errorInfo) => {
+      measureErrors.push(errorInfo);
+    },
+    onProgress,
+  );
 
-  const pdfBlob = await generatePdfBlobFromElement(rootElement);
-  const bytes = new Uint8Array(await pdfBlob.arrayBuffer());
-  const base64 = uint8ToBase64(bytes);
-
-  const initPayload = {
-    fileName: sanitizeFileName(fileName),
+  const finalResponse = await transferBinaryToBridge({
+    bytes: pdfBytes,
+    fileName: sanitizePdfFileName(fileName),
     mimeType: "application/pdf",
-    expectedByteLength: bytes.length,
-    totalChunks: 0,
-  };
+    commands: {
+      init: BRIDGE_COMMANDS.INIT,
+      chunk: BRIDGE_COMMANDS.CHUNK,
+      finalize: BRIDGE_COMMANDS.FINALIZE,
+      abort: BRIDGE_COMMANDS.ABORT,
+    },
+    buildFinalizePayload({ sessionId, totalChunks, expectedByteLength }) {
+      return {
+        sessionId,
+        totalChunks,
+        expectedByteLength,
+        fileName: sanitizePdfFileName(fileName),
+        mimeType: "application/pdf",
+        imageQualityLevel,
+      };
+    },
+    onProgress(progress) {
+      if (typeof onProgress !== "function") {
+        return;
+      }
 
-  const initResponse = await MNBridge.send(BRIDGE_COMMANDS.INIT, initPayload);
-  if (!initResponse || initResponse.ok !== true) {
-    throw createExportError({
-      command: BRIDGE_COMMANDS.INIT,
-      message: initResponse && initResponse.message ? initResponse.message : "savePdfInit failed",
-      details: initResponse,
+      if (progress.phase === "transfer") {
+        onProgress({
+          ...progress,
+          message: `正在写入MN文档 ${progress.current}/${progress.total}`,
+        });
+        return;
+      }
+
+      onProgress(progress);
+    },
+  });
+
+  if (typeof onProgress === "function") {
+    onProgress({
+      phase: "done",
+      current: 1,
+      total: 1,
+      ratioHint: 1,
+      message: "导入完成",
     });
   }
 
-  const sessionId = initResponse.data.sessionId;
-  const maxChunkChars = Math.max(
-    1024,
-    Math.min(
-      DEFAULT_MAX_CHUNK_CHARS,
-      Number(initResponse.data.maxChunkChars || DEFAULT_MAX_CHUNK_CHARS),
-    ),
-  );
-  const chunks = splitByLength(base64, maxChunkChars);
-
-  try {
-    for (let i = 0; i < chunks.length; i += 1) {
-      const chunkPayload = {
-        sessionId,
-        chunkIndex: i,
-        base64Chunk: chunks[i],
-        chunkCharLength: chunks[i].length,
-      };
-
-      const response = await MNBridge.send(BRIDGE_COMMANDS.CHUNK, chunkPayload);
-      if (!response || response.ok !== true) {
-        throw createExportError({
-          command: BRIDGE_COMMANDS.CHUNK,
-          chunkIndex: i,
-          message: response && response.message ? response.message : "savePdfChunk failed",
-          details: response,
-        });
-      }
-
-      if (typeof onProgress === "function") {
-        onProgress({
-          stage: "transfer",
-          command: BRIDGE_COMMANDS.CHUNK,
-          chunkIndex: i,
-          totalChunks: chunks.length,
-          message: `正在传输分片${i + 1}/${chunks.length}`,
-        });
-      }
-    }
-
-    const finalizePayload = {
-      sessionId,
-      totalChunks: chunks.length,
-      expectedByteLength: bytes.length,
-      fileName: sanitizeFileName(fileName),
-      mimeType: "application/pdf",
+  if (measureErrors.length > 0) {
+    finalResponse.data = {
+      ...(finalResponse.data || {}),
+      measureErrors,
     };
-
-    const finalResponse = await MNBridge.send(BRIDGE_COMMANDS.FINALIZE, finalizePayload);
-    if (!finalResponse || finalResponse.ok !== true) {
-      throw createExportError({
-        command: BRIDGE_COMMANDS.FINALIZE,
-        message: finalResponse && finalResponse.message ? finalResponse.message : "savePdfFinalize failed",
-        details: finalResponse,
-      });
-    }
-
-    if (typeof onProgress === "function") {
-      onProgress({
-        stage: "done",
-        command: BRIDGE_COMMANDS.FINALIZE,
-        message: "已保存到文档目录并导入文档库",
-      });
-    }
-
-    return finalResponse;
-  } catch (error) {
-    try {
-      await MNBridge.send(BRIDGE_COMMANDS.ABORT, {
-        sessionId,
-        reason: error && error.message ? error.message : String(error),
-      });
-    } catch (abortError) {
-      // keep original error
-    }
-
-    throw error;
   }
+
+  return finalResponse;
 }

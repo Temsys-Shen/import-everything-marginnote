@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { runConversionPipeline, buildInitialDocuments } from "./pipeline/convertPipeline";
 import { ParseStatus } from "./pipeline/documentModel";
 import {
@@ -7,27 +7,32 @@ import {
   DEFAULT_PREVIEW_SECTION_LIMIT,
 } from "./preview/mergedPreviewModel";
 import MergedPreview from "./preview/MergedPreview";
-import { exportMergedPreviewToDocumentPath } from "./services/exportService";
-
-const STEP_ORDER = ["select", "converting", "result"];
-
-const STEP_META = {
-  select: {
-    key: "select",
-    number: "01",
-    title: "选择文件",
-  },
-  converting: {
-    key: "converting",
-    number: "02",
-    title: "开始转换",
-  },
-  result: {
-    key: "result",
-    number: "03",
-    title: "导入文档",
-  },
-};
+import {
+  exportMergedPreviewToDocumentPath,
+  getImageQualityPreset,
+} from "./services/exportService";
+import ProgressCard from "./components/ProgressCard";
+import {
+  buildConversionProgressModel,
+  buildImportProgressModel,
+} from "./progress/progressModel";
+import {
+  buildAutoExportFileName,
+  deleteFontAsset,
+  deleteStylePreset,
+  inferFontDraft,
+  loadExportConfigBundle,
+  readStylePreset,
+  sanitizePdfFileName,
+  saveStylePreset,
+  showAlertMessage,
+  uploadFontAsset,
+} from "./services/exportConfigService";
+import {
+  buildFontRegistry,
+  buildScopedThemeCss,
+} from "./services/exportThemeService";
+import { applyAdaptiveLayout } from "./services/widthAdaptService";
 
 function statusLabel(status) {
   if (status === ParseStatus.PENDING) return "待处理";
@@ -66,19 +71,6 @@ function formatFileSize(size) {
   return `${Math.max(1, Math.round(size / 1024))}KB`;
 }
 
-function buildExportFileName(selectedFiles) {
-  if (!selectedFiles || selectedFiles.length === 0) {
-    return `ImportEverything-${Date.now()}.pdf`;
-  }
-
-  if (selectedFiles.length === 1) {
-    const name = selectedFiles[0].name.replace(/\.[^.]+$/, "");
-    return `${name}-merged.pdf`;
-  }
-
-  return `Merged-${selectedFiles.length}-files-${Date.now()}.pdf`;
-}
-
 function getFileIdentity(file) {
   return `${file.name}::${file.size}::${file.lastModified}`;
 }
@@ -86,12 +78,10 @@ function getFileIdentity(file) {
 function mergeUniqueFiles(existingFiles, incomingFiles) {
   const seen = new Set(existingFiles.map(getFileIdentity));
   const addedFiles = [];
-  let duplicateCount = 0;
 
   incomingFiles.forEach((file) => {
     const identity = getFileIdentity(file);
     if (seen.has(identity)) {
-      duplicateCount += 1;
       return;
     }
 
@@ -101,88 +91,85 @@ function mergeUniqueFiles(existingFiles, incomingFiles) {
 
   return {
     mergedFiles: existingFiles.concat(addedFiles),
-    addedCount: addedFiles.length,
-    duplicateCount,
   };
 }
 
-function buildSelectProgressText(files, options = {}) {
-  const {
-    source = "select",
-    addedCount = null,
-    duplicateCount = 0,
-    previousCount = 0,
-  } = options;
-
-  if (!files || files.length === 0) {
-    return "选择文件后再开始转换";
-  }
-
-  if (source === "reorder") {
-    return `顺序已更新，共${files.length}个文件`;
-  }
-
-  if (source === "remove") {
-    return `已更新文件列表，共${files.length}个文件`;
-  }
-
-  if (source === "clear") {
-    return "选择文件后再开始转换";
-  }
-
-  if (addedCount === 0 && duplicateCount > 0) {
-    return `选择的${duplicateCount}个文件都已在列表中，未追加`;
-  }
-
-  if (addedCount && duplicateCount > 0) {
-    return `已追加${addedCount}个文件，跳过${duplicateCount}个重复文件，共${files.length}个文件`;
-  }
-
-  if (addedCount && previousCount > 0) {
-    return `已追加${addedCount}个文件，共${files.length}个文件`;
-  }
-
-  if (source === "drop") {
-    return `已拖入${files.length}个文件，按当前顺序开始转换`;
-  }
-
-  return `已准备${files.length}个文件，点击开始转换`;
+function formatFontLabel(font) {
+  return `${font.family} · ${font.weight} · ${font.style}`;
 }
 
-function buildProgressText(progress) {
-  if (!progress) {
-    return "正在准备转换";
+function buildImportAlertMessage(saveError) {
+  if (!saveError) {
+    return "已导入到MN文档";
   }
 
-  if (progress.total) {
-    return `${progress.fileName} · ${progress.stage} ${progress.current}/${progress.total}`;
-  }
-
-  if (progress.fileName && progress.stage) {
-    return `${progress.fileName} · ${progress.stage}`;
-  }
-
-  return progress.stage || "正在处理";
+  return `导入到MN文档失败\n${saveError.message}`;
 }
 
-function StepIndicator({ currentStep }) {
-  const currentIndex = STEP_ORDER.indexOf(currentStep);
+async function notifyImportResult(saveError) {
+  const message = buildImportAlertMessage(saveError);
 
-  return (
-    <nav className="step-strip" aria-label="转换步骤">
-      {STEP_ORDER.map((stepKey, index) => {
-        const item = STEP_META[stepKey];
-        const state = index < currentIndex ? "done" : index === currentIndex ? "active" : "upcoming";
+  try {
+    await showAlertMessage(message);
+  } catch (error) {
+    console.log(`[ImportEverything] show import alert failed: ${String(error)}`);
+  }
+}
 
-        return (
-          <div key={stepKey} className={`step-pill step-${state}`}>
-            <span className="step-number">{item.number}</span>
-            <span className="step-title">{item.title}</span>
-          </div>
-        );
-      })}
-    </nav>
-  );
+const IMAGE_QUALITY_MIN = 1;
+const IMAGE_QUALITY_MAX = 5;
+const PREVIEW_ZOOM_MIN = 50;
+const PREVIEW_ZOOM_MAX = 200;
+const PREVIEW_ZOOM_STEP = 10;
+
+function clampPreviewZoom(value) {
+  const normalized = Number(value);
+  if (!Number.isFinite(normalized)) {
+    return 100;
+  }
+
+  return Math.max(PREVIEW_ZOOM_MIN, Math.min(PREVIEW_ZOOM_MAX, Math.round(normalized)));
+}
+
+function useSmoothedPercent(targetPercent, runId) {
+  const [displayPercent, setDisplayPercent] = useState(targetPercent);
+
+  useEffect(() => {
+    setDisplayPercent(0);
+  }, [runId]);
+
+  useEffect(() => {
+    if (targetPercent <= 0) {
+      setDisplayPercent(0);
+      return undefined;
+    }
+
+    let frameId = 0;
+
+    const tick = () => {
+      setDisplayPercent((previous) => {
+        if (targetPercent <= previous) {
+          return previous;
+        }
+
+        const gap = targetPercent - previous;
+        const step = Math.max(0.4, gap * 0.12);
+        const next = Math.min(targetPercent, previous + step);
+        if (next < targetPercent) {
+          frameId = window.requestAnimationFrame(tick);
+        }
+        return next;
+      });
+    };
+
+    frameId = window.requestAnimationFrame(tick);
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [targetPercent, runId]);
+
+  return displayPercent;
 }
 
 function FileQueue({
@@ -194,11 +181,7 @@ function FileQueue({
   onRemove,
 }) {
   if (files.length === 0) {
-    return (
-      <div className="empty-block">
-        <p>支持Word、Markdown、图片、代码、表格等内容。</p>
-      </div>
-    );
+    return null;
   }
 
   return (
@@ -248,30 +231,69 @@ function FileQueue({
   );
 }
 
-function DocumentStatusList({ documents }) {
-  if (documents.length === 0) {
-    return <p className="muted-text">暂无文件任务。</p>;
+function DocumentStatusList({ documents, problemsOnly = false }) {
+  const [expandedWarningIds, setExpandedWarningIds] = useState([]);
+  const visibleDocuments = useMemo(
+    () => (problemsOnly
+      ? documents.filter((doc) => doc.parseStatus === ParseStatus.ERROR || (doc.warnings || []).length > 0)
+      : documents),
+    [documents, problemsOnly],
+  );
+
+  function toggleWarnings(docId) {
+    setExpandedWarningIds((current) => (
+      current.includes(docId)
+        ? current.filter((id) => id !== docId)
+        : current.concat(docId)
+    ));
+  }
+
+  if (visibleDocuments.length === 0) {
+    return <p className="muted-text">暂无异常或警告。</p>;
   }
 
   return (
     <div className="status-list">
-      {documents.map((doc) => (
-        <article key={doc.id} className={`status-card status-${doc.parseStatus}`}>
-          <header className="status-card-header">
-            <h3>{doc.name}</h3>
-            <span>{statusLabel(doc.parseStatus)}</span>
-          </header>
-          <p>{sourceTypeLabel(doc.sourceType)}</p>
-          {doc.error ? <p className="error-text">{doc.error.message}</p> : null}
-          {doc.warnings && doc.warnings.length > 0 ? (
-            <ul className="warning-list">
-              {doc.warnings.map((warning, index) => (
-                <li key={`${doc.id}-warning-${index}`}>{warning}</li>
-              ))}
-            </ul>
-          ) : null}
-        </article>
-      ))}
+      {visibleDocuments.map((doc) => {
+        const warningCount = (doc.warnings || []).length;
+        const warningsExpanded = expandedWarningIds.includes(doc.id);
+
+        return (
+          <article key={doc.id} className={`status-card status-${doc.parseStatus}`}>
+            <header className="status-card-header">
+              <h3>{doc.name}</h3>
+              <span>{statusLabel(doc.parseStatus)}</span>
+            </header>
+
+            <p className="status-type">{sourceTypeLabel(doc.sourceType)}</p>
+
+            {doc.error ? <p className="error-text">{doc.error.message}</p> : null}
+
+            {warningCount > 0 ? (
+              <div className="warning-block">
+                <div className="warning-summary">
+                  <span>{warningCount}条警告</span>
+                  <button
+                    type="button"
+                    className="button button-ghost button-small"
+                    onClick={() => toggleWarnings(doc.id)}
+                  >
+                    {warningsExpanded ? "收起警告" : "查看警告"}
+                  </button>
+                </div>
+
+                {warningsExpanded ? (
+                  <ul className="warning-list">
+                    {doc.warnings.map((warning, index) => (
+                      <li key={`${doc.id}-warning-${index}`}>{warning}</li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            ) : null}
+          </article>
+        );
+      })}
     </div>
   );
 }
@@ -281,84 +303,417 @@ function App() {
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [documents, setDocuments] = useState([]);
   const [isConverting, setIsConverting] = useState(false);
-  const [progressText, setProgressText] = useState("选择文件后再开始转换");
   const [currentProgress, setCurrentProgress] = useState(null);
   const [showStatusDetails, setShowStatusDetails] = useState(false);
-  const [showPreview, setShowPreview] = useState(true);
   const [showFullPreview, setShowFullPreview] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [saveProgressText, setSaveProgressText] = useState("尚未导入到MN文档");
+  const [saveProgress, setSaveProgress] = useState(null);
   const [saveError, setSaveError] = useState(null);
   const [lastSavedInfo, setLastSavedInfo] = useState(null);
+  const [hasSaveAttempt, setHasSaveAttempt] = useState(false);
+  const [conversionRunId, setConversionRunId] = useState(0);
+  const [saveRunId, setSaveRunId] = useState(0);
+
+  const [exportConfig, setExportConfig] = useState({
+    loading: true,
+    error: "",
+    rootPath: "",
+    styles: [],
+    fonts: [],
+  });
+  const [activeStyleId, setActiveStyleId] = useState("");
+  const [activeStyleMeta, setActiveStyleMeta] = useState(null);
+  const [styleDraftName, setStyleDraftName] = useState("");
+  const [styleDraftCss, setStyleDraftCss] = useState("");
+  const [stylePickerOpen, setStylePickerOpen] = useState(false);
+  const [settingsDrawerOpen, setSettingsDrawerOpen] = useState(false);
+  const [styleBusy, setStyleBusy] = useState(false);
+  const [styleMessage, setStyleMessage] = useState("");
+  const [styleError, setStyleError] = useState("");
+  const [fontBusy, setFontBusy] = useState(false);
+  const [fontMessage, setFontMessage] = useState("");
+  const [fontError, setFontError] = useState("");
+  const [pendingFontFile, setPendingFontFile] = useState(null);
+  const [pendingFontFamily, setPendingFontFamily] = useState("");
+  const [pendingFontWeight, setPendingFontWeight] = useState(400);
+  const [pendingFontStyle, setPendingFontStyle] = useState("normal");
+  const [exportFileName, setExportFileName] = useState("ImportEverything.pdf");
+  const [isExportFileNameDirty, setIsExportFileNameDirty] = useState(false);
+  const [imageQualityLevel, setImageQualityLevel] = useState(3);
+  const [previewZoomLevel, setPreviewZoomLevel] = useState(100);
+  const [previewBaseSize, setPreviewBaseSize] = useState({
+    width: 0,
+    height: 0,
+  });
+
+  const styleImportInputRef = useRef(null);
+  const fontUploadInputRef = useRef(null);
+  const stylePickerRef = useRef(null);
+  const previewViewportRef = useRef(null);
 
   const previewModel = useMemo(() => buildMergedPreviewModel(documents), [documents]);
   const compactPreviewModel = useMemo(
     () => createMergedPreviewSlice(previewModel, DEFAULT_PREVIEW_SECTION_LIMIT),
     [previewModel],
   );
-
   const activePreviewModel = showFullPreview ? previewModel : compactPreviewModel;
+
   const successCount = documents.filter((item) => item.parseStatus === ParseStatus.SUCCESS).length;
   const errorCount = documents.filter((item) => item.parseStatus === ParseStatus.ERROR).length;
-  const processingDoc = documents.find((item) => item.parseStatus === ParseStatus.PROCESSING) || null;
+  const warningCount = documents.reduce((sum, item) => sum + ((item.warnings || []).length), 0);
+  const problemDocuments = documents.filter(
+    (item) => item.parseStatus === ParseStatus.ERROR || (item.warnings || []).length > 0,
+  );
+
+  const conversionProgress = useMemo(
+    () => buildConversionProgressModel({
+      documents,
+      progress: currentProgress,
+      isActive: isConverting,
+    }),
+    [documents, currentProgress, isConverting],
+  );
+  const saveProgressModel = useMemo(
+    () => buildImportProgressModel(saveProgress, exportFileName, isSaving),
+    [saveProgress, exportFileName, isSaving],
+  );
+  const displayConversionPercent = useSmoothedPercent(conversionProgress.targetPercent, conversionRunId);
+  const displaySavePercent = useSmoothedPercent(saveProgressModel ? saveProgressModel.targetPercent : 0, saveRunId);
   const canStartConversion = selectedFiles.length > 0 && !isConverting;
   const canImportToMN = previewModel.totalContentSections > 0 && !isSaving;
+  const fontRegistry = useMemo(
+    () => buildFontRegistry(exportConfig.fonts),
+    [exportConfig.fonts],
+  );
+  const activeStyleLabel = useMemo(() => {
+    const matchedStyle = exportConfig.styles.find((style) => style.id === activeStyleId);
+    if (!matchedStyle) {
+      return exportConfig.loading ? "读取中" : "请选择样式";
+    }
+    return `${matchedStyle.name}${matchedStyle.builtin ? " · 内置" : ""}`;
+  }, [exportConfig.styles, activeStyleId, exportConfig.loading]);
+  const themeCssText = useMemo(
+    () => buildScopedThemeCss({
+      styleId: activeStyleId || "default",
+      styleCss: styleDraftCss,
+      fontRegistry,
+    }),
+    [activeStyleId, styleDraftCss, fontRegistry],
+  );
+  const activeImageQualityPreset = useMemo(
+    () => getImageQualityPreset(imageQualityLevel),
+    [imageQualityLevel],
+  );
+  const previewZoomScale = previewZoomLevel / 100;
+  const previewZoomShellStyle = previewBaseSize.height > 0
+    ? {
+      height: `${previewBaseSize.height * previewZoomScale}px`,
+    }
+    : undefined;
+  const previewZoomStageStyle = previewBaseSize.height > 0
+    ? {
+      width: `${100 / previewZoomScale}%`,
+      transform: `scale(${previewZoomScale})`,
+    }
+    : {
+      position: "static",
+      width: "100%",
+      transform: `scale(${previewZoomScale})`,
+    };
 
-  const subtitle =
-    step === "select"
-      ? progressText
-      : step === "converting"
-        ? buildProgressText(currentProgress) || progressText
-        : saveError
-          ? saveProgressText
-          : lastSavedInfo
-            ? "已导入到MN文档目录"
-            : `转换完成，成功${successCount}个，失败${errorCount}个`;
+  useEffect(() => {
+    if (isExportFileNameDirty) {
+      return;
+    }
+
+    setExportFileName(buildAutoExportFileName(selectedFiles));
+  }, [selectedFiles, isExportFileNameDirty]);
+
+  useEffect(() => {
+    window.__onPanelShow = () => {
+      setImageQualityLevel(3);
+      setPreviewZoomLevel(100);
+    };
+
+    return () => {
+      if (window.__onPanelShow) {
+        delete window.__onPanelShow;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function refreshConfig() {
+      setExportConfig((current) => ({
+        ...current,
+        loading: true,
+        error: "",
+      }));
+
+      try {
+        const nextConfig = await loadExportConfigBundle();
+        if (cancelled) {
+          return;
+        }
+
+        setExportConfig({
+          loading: false,
+          error: "",
+          ...nextConfig,
+        });
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+
+        setExportConfig((current) => ({
+          ...current,
+          loading: false,
+          error: error && error.message ? error.message : String(error),
+        }));
+      }
+    }
+
+    refreshConfig();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (exportConfig.styles.length === 0) {
+      setActiveStyleId("");
+      return;
+    }
+
+    const hasActive = exportConfig.styles.some((style) => style.id === activeStyleId);
+    if (!hasActive) {
+      setActiveStyleId(exportConfig.styles[0].id);
+    }
+  }, [exportConfig.styles, activeStyleId]);
+
+  useEffect(() => {
+    if (!activeStyleId) {
+      setActiveStyleMeta(null);
+      setStyleDraftName("");
+      setStyleDraftCss("");
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    async function loadStyleDraft() {
+      setStyleError("");
+      try {
+        const result = await readStylePreset(activeStyleId);
+        if (cancelled) {
+          return;
+        }
+        setActiveStyleMeta(result.style);
+        setStyleDraftName(result.style.name);
+        setStyleDraftCss(result.cssText);
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        setStyleError(error && error.message ? error.message : String(error));
+      }
+    }
+
+    loadStyleDraft();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeStyleId]);
+
+  useEffect(() => {
+    if (!stylePickerOpen) {
+      return undefined;
+    }
+
+    function handlePointerDown(event) {
+      if (!stylePickerRef.current || stylePickerRef.current.contains(event.target)) {
+        return;
+      }
+      setStylePickerOpen(false);
+    }
+
+    function handleKeyDown(event) {
+      if (event.key === "Escape") {
+        setStylePickerOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("touchstart", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("touchstart", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [stylePickerOpen]);
+
+  useEffect(() => {
+    if (!settingsDrawerOpen) {
+      return undefined;
+    }
+
+    function handleKeyDown(event) {
+      if (event.key === "Escape") {
+        setSettingsDrawerOpen(false);
+        setStylePickerOpen(false);
+      }
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [settingsDrawerOpen]);
+
+  useEffect(() => {
+    if (step === "result") {
+      return;
+    }
+
+    setSettingsDrawerOpen(false);
+    setStylePickerOpen(false);
+  }, [step]);
+
+  useEffect(() => {
+    if (step !== "result") {
+      setPreviewBaseSize({
+        width: 0,
+        height: 0,
+      });
+      return undefined;
+    }
+
+    const rootElement = document.getElementById("result-preview-root");
+    const viewportElement = previewViewportRef.current;
+    if (!rootElement || !viewportElement) {
+      return undefined;
+    }
+
+    const cleanupAdaptiveLayout = applyAdaptiveLayout(rootElement, {
+      onMeasureError(info) {
+        console.log(`[ImportEverything] preview width adapt failed: ${info.selector} - ${info.message}`);
+      },
+    });
+
+    let frameId = 0;
+    let resizeObserver = null;
+
+    function measurePreviewLayout() {
+      const rect = rootElement.getBoundingClientRect();
+      const nextSize = {
+        width: Math.max(0, Math.ceil(rootElement.scrollWidth || rect.width || 0)),
+        height: Math.max(0, Math.ceil(rootElement.scrollHeight || rect.height || 0)),
+      };
+
+      setPreviewBaseSize((current) => (
+        current.width === nextSize.width && current.height === nextSize.height
+          ? current
+          : nextSize
+      ));
+    }
+
+    frameId = window.requestAnimationFrame(measurePreviewLayout);
+
+    if (typeof ResizeObserver !== "undefined") {
+      resizeObserver = new ResizeObserver(() => {
+        window.cancelAnimationFrame(frameId);
+        frameId = window.requestAnimationFrame(measurePreviewLayout);
+      });
+      resizeObserver.observe(rootElement);
+      resizeObserver.observe(viewportElement);
+    }
+
+    return () => {
+      if (resizeObserver) {
+        resizeObserver.disconnect();
+      }
+      window.cancelAnimationFrame(frameId);
+      cleanupAdaptiveLayout();
+    };
+  }, [step, showFullPreview, styleDraftCss, fontRegistry, activePreviewModel, previewZoomLevel]);
+
+  async function refreshExportConfig(preferredStyleId = activeStyleId) {
+    setExportConfig((current) => ({
+      ...current,
+      loading: true,
+      error: "",
+    }));
+
+    try {
+      const nextConfig = await loadExportConfigBundle();
+      setExportConfig({
+        loading: false,
+        error: "",
+        ...nextConfig,
+      });
+
+      const hasPreferredStyle = nextConfig.styles.some((style) => style.id === preferredStyleId);
+      if (hasPreferredStyle) {
+        setActiveStyleId(preferredStyleId);
+      } else if (nextConfig.styles.length > 0) {
+        setActiveStyleId(nextConfig.styles[0].id);
+      } else {
+        setActiveStyleId("");
+      }
+    } catch (error) {
+      setExportConfig((current) => ({
+        ...current,
+        loading: false,
+        error: error && error.message ? error.message : String(error),
+      }));
+    }
+  }
 
   function resetSaveState() {
     setIsSaving(false);
+    setSaveProgress(null);
     setSaveError(null);
     setLastSavedInfo(null);
-    setSaveProgressText("尚未导入到MN文档");
+    setHasSaveAttempt(false);
   }
 
-  function syncFiles(nextFiles, progressOptions = {}) {
+  function syncFiles(nextFiles) {
     setSelectedFiles(nextFiles);
     setDocuments(buildInitialDocuments(nextFiles));
     setStep("select");
     setIsConverting(false);
     setCurrentProgress(null);
     setShowStatusDetails(false);
-    setShowPreview(true);
     setShowFullPreview(false);
     resetSaveState();
-    setProgressText(buildSelectProgressText(nextFiles, progressOptions));
+    setIsExportFileNameDirty(false);
+    setPreviewZoomLevel(100);
   }
 
-  function appendFiles(incomingFiles, source) {
+  function appendFiles(incomingFiles) {
     if (!incomingFiles || incomingFiles.length === 0) {
       return;
     }
 
-    const { mergedFiles, addedCount, duplicateCount } = mergeUniqueFiles(selectedFiles, incomingFiles);
-    syncFiles(mergedFiles, {
-      source,
-      addedCount,
-      duplicateCount,
-      previousCount: selectedFiles.length,
-    });
+    const { mergedFiles } = mergeUniqueFiles(selectedFiles, incomingFiles);
+    syncFiles(mergedFiles);
   }
 
   function onFileChange(event) {
     const files = Array.from(event.target.files || []);
-    appendFiles(files, "select");
+    appendFiles(files);
     event.target.value = "";
   }
 
   function onDrop(event) {
     event.preventDefault();
     const files = Array.from(event.dataTransfer.files || []);
-    appendFiles(files, "drop");
+    appendFiles(files);
   }
 
   function onDragOver(event) {
@@ -366,12 +721,12 @@ function App() {
   }
 
   function clearAll() {
-    syncFiles([], { source: "clear" });
+    syncFiles([]);
   }
 
   function removeFileAt(index) {
     const nextFiles = selectedFiles.filter((_, fileIndex) => fileIndex !== index);
-    syncFiles(nextFiles, { source: "remove" });
+    syncFiles(nextFiles);
   }
 
   function moveFile(index, direction) {
@@ -384,7 +739,7 @@ function App() {
     const currentFile = nextFiles[index];
     nextFiles[index] = nextFiles[targetIndex];
     nextFiles[targetIndex] = currentFile;
-    syncFiles(nextFiles, { source: "reorder" });
+    syncFiles(nextFiles);
   }
 
   function returnToSelection() {
@@ -393,10 +748,9 @@ function App() {
     setIsConverting(false);
     setCurrentProgress(null);
     setShowStatusDetails(false);
-    setShowPreview(true);
     setShowFullPreview(false);
     resetSaveState();
-    setProgressText(buildSelectProgressText(selectedFiles, { source: "select" }));
+    setPreviewZoomLevel(100);
   }
 
   async function startConversion() {
@@ -404,36 +758,35 @@ function App() {
       return;
     }
 
+    setConversionRunId((value) => value + 1);
     setStep("converting");
     setIsConverting(true);
     setShowStatusDetails(false);
-    setShowPreview(true);
     setShowFullPreview(false);
+    setPreviewZoomLevel(100);
     resetSaveState();
-    setProgressText("开始执行转换");
     setCurrentProgress({
-      stage: "正在准备转换",
-      fileName: "",
+      fileIndex: 0,
+      totalFiles: selectedFiles.length,
+      fileName: selectedFiles[0] ? selectedFiles[0].name : "",
+      stage: "prepare",
+      current: 0,
+      total: 1,
+      ratioHint: 0.08,
     });
 
     try {
-      const converted = await runConversionPipeline(selectedFiles, {
+      await runConversionPipeline(selectedFiles, {
         onDocumentsChange(nextDocs) {
           setDocuments(nextDocs);
         },
         onProgress(progress) {
           setCurrentProgress(progress);
-          setProgressText(buildProgressText(progress));
         },
       });
-
-      const ok = converted.filter((item) => item.parseStatus === ParseStatus.SUCCESS).length;
-      const bad = converted.filter((item) => item.parseStatus === ParseStatus.ERROR).length;
-      setProgressText(`转换完成，成功${ok}个，失败${bad}个`);
-    } catch (error) {
-      setProgressText(`转换异常: ${error && error.message ? error.message : String(error)}`);
     } finally {
       setIsConverting(false);
+      setShowStatusDetails(false);
       setStep("result");
     }
   }
@@ -443,30 +796,41 @@ function App() {
       return;
     }
 
+    setSaveRunId((value) => value + 1);
+    setHasSaveAttempt(true);
     setIsSaving(true);
     setSaveError(null);
     setLastSavedInfo(null);
-    setSaveProgressText("正在生成完整PDF并导入MN文档");
+    setSaveProgress({
+      phase: "render",
+      message: "正在生成PDF",
+      current: 0,
+      total: 1,
+      ratioHint: 0.08,
+    });
 
     try {
       const rootElement = document.getElementById("export-print-root");
       const result = await exportMergedPreviewToDocumentPath({
         rootElement,
-        fileName: buildExportFileName(selectedFiles),
+        fileName: sanitizePdfFileName(exportFileName),
+        imageQualityLevel,
         onProgress(progress) {
-          if (progress.stage === "transfer") {
-            setSaveProgressText(`正在写入MN文档 ${progress.chunkIndex + 1}/${progress.totalChunks}`);
-            return;
-          }
-
-          setSaveProgressText(progress.message || progress.stage);
+          setSaveProgress(progress);
         },
       });
 
+      setSaveProgress({
+        phase: "done",
+        message: "导入完成",
+        current: 1,
+        total: 1,
+        ratioHint: 1,
+      });
       setLastSavedInfo(result.data || null);
-      setSaveProgressText("导入成功，已写入文档目录并自动导入");
+      await notifyImportResult(null);
     } catch (error) {
-      const normalized = {
+      const nextSaveError = {
         command: error && error.command ? error.command : "unknown",
         chunkIndex:
           error && error.chunkIndex !== undefined && error.chunkIndex !== null
@@ -474,31 +838,450 @@ function App() {
             : "n/a",
         message: error && error.message ? error.message : String(error),
       };
-      setSaveError(normalized);
-      setSaveProgressText(`导入失败: ${normalized.message}`);
+      setSaveError(nextSaveError);
+      await notifyImportResult(nextSaveError);
     } finally {
       setIsSaving(false);
     }
   }
 
+  function adjustPreviewZoom(delta) {
+    setPreviewZoomLevel((current) => clampPreviewZoom(current + delta));
+  }
+
+  function resetPreviewZoom() {
+    setPreviewZoomLevel(100);
+  }
+
+  async function handleSaveStyle() {
+    if (!styleDraftCss.trim()) {
+      setStyleError("样式内容不能为空");
+      return;
+    }
+
+    setStyleBusy(true);
+    setStyleError("");
+    setStyleMessage("");
+
+    try {
+      const shouldCreateNew = !activeStyleMeta || activeStyleMeta.builtin === true;
+      const result = await saveStylePreset({
+        id: shouldCreateNew ? undefined : activeStyleMeta.id,
+        name: styleDraftName || (activeStyleMeta ? `${activeStyleMeta.name}副本` : "新样式"),
+        cssText: styleDraftCss,
+      });
+
+      setStyleMessage(shouldCreateNew ? "已保存为新样式" : "样式已保存");
+      await refreshExportConfig(result.style.id);
+    } catch (error) {
+      setStyleError(error && error.message ? error.message : String(error));
+    } finally {
+      setStyleBusy(false);
+    }
+  }
+
+  async function handleDuplicateStyle() {
+    setStyleBusy(true);
+    setStyleError("");
+    setStyleMessage("");
+
+    try {
+      const result = await saveStylePreset({
+        name: `${styleDraftName || (activeStyleMeta ? activeStyleMeta.name : "新样式")}副本`,
+        cssText: styleDraftCss,
+      });
+      setStyleMessage("已创建新样式");
+      await refreshExportConfig(result.style.id);
+    } catch (error) {
+      setStyleError(error && error.message ? error.message : String(error));
+    } finally {
+      setStyleBusy(false);
+    }
+  }
+
+  async function handleDeleteStyle() {
+    if (!activeStyleMeta || activeStyleMeta.builtin) {
+      return;
+    }
+
+    setStyleBusy(true);
+    setStyleError("");
+    setStyleMessage("");
+
+    try {
+      await deleteStylePreset(activeStyleMeta.id);
+      await refreshExportConfig();
+    } catch (error) {
+      setStyleError(error && error.message ? error.message : String(error));
+    } finally {
+      setStyleBusy(false);
+    }
+  }
+
+  async function handleImportStyle(event) {
+    const file = event.target.files && event.target.files[0];
+    event.target.value = "";
+
+    if (!file) {
+      return;
+    }
+
+    setStyleBusy(true);
+    setStyleError("");
+    setStyleMessage("");
+
+    try {
+      const cssText = await file.text();
+      const styleName = file.name.replace(/\.[^.]+$/, "") || "导入样式";
+      const result = await saveStylePreset({
+        name: styleName,
+        cssText,
+      });
+      setStyleMessage("CSS已导入为新样式");
+      await refreshExportConfig(result.style.id);
+    } catch (error) {
+      setStyleError(error && error.message ? error.message : String(error));
+    } finally {
+      setStyleBusy(false);
+    }
+  }
+
+  function handleChooseFontFile(event) {
+    const file = event.target.files && event.target.files[0];
+    event.target.value = "";
+
+    if (!file) {
+      return;
+    }
+
+    const draft = inferFontDraft(file);
+    setPendingFontFile(file);
+    setPendingFontFamily(draft.family);
+    setPendingFontWeight(draft.weight);
+    setPendingFontStyle(draft.style);
+    setFontError("");
+    setFontMessage("");
+  }
+
+  async function handleUploadFont() {
+    if (!pendingFontFile) {
+      setFontError("请先选择字体文件");
+      return;
+    }
+
+    setFontBusy(true);
+    setFontError("");
+    setFontMessage("");
+
+    try {
+      await uploadFontAsset({
+        file: pendingFontFile,
+        family: pendingFontFamily,
+        weight: pendingFontWeight,
+        style: pendingFontStyle,
+        onProgress(progress) {
+          setFontMessage(progress.message || "正在上传字体");
+        },
+      });
+
+      setFontMessage("字体上传完成");
+      setPendingFontFile(null);
+      await refreshExportConfig(activeStyleId);
+    } catch (error) {
+      setFontError(error && error.message ? error.message : String(error));
+    } finally {
+      setFontBusy(false);
+    }
+  }
+
+  async function handleDeleteFont(fontId) {
+    setFontBusy(true);
+    setFontError("");
+    setFontMessage("");
+
+    try {
+      await deleteFontAsset(fontId);
+      setFontMessage("字体已移入回收区");
+      await refreshExportConfig(activeStyleId);
+    } catch (error) {
+      setFontError(error && error.message ? error.message : String(error));
+    } finally {
+      setFontBusy(false);
+    }
+  }
+
+  function handleSelectStyle(styleId) {
+    setActiveStyleId(styleId);
+    setStylePickerOpen(false);
+  }
+
+  function openSettingsDrawer() {
+    setSettingsDrawerOpen(true);
+  }
+
+  function closeSettingsDrawer() {
+    setSettingsDrawerOpen(false);
+    setStylePickerOpen(false);
+  }
+
+  const exportSettingsContent = (
+    <div className="export-settings-card">
+      <div className="detail-head">
+        <div>
+          <h2>导出设置</h2>
+        </div>
+        {exportConfig.loading ? <span className="count-badge">读取中</span> : null}
+      </div>
+
+      {exportConfig.error ? <p className="error-text">{exportConfig.error}</p> : null}
+
+      <div className="settings-block">
+        <label className="field-label" htmlFor="export-file-name">PDF名称</label>
+        <input
+          id="export-file-name"
+          className="text-input"
+          value={exportFileName}
+          onChange={(event) => {
+            setExportFileName(event.target.value);
+            setIsExportFileNameDirty(true);
+          }}
+          onBlur={() => setExportFileName((current) => sanitizePdfFileName(current))}
+          placeholder="输入导出PDF名称"
+        />
+      </div>
+
+      <div className="settings-block">
+        <div className="quality-slider-head">
+          <label className="field-label" htmlFor="export-quality-slider">导出质量</label>
+          <span className="quality-slider-value">{activeImageQualityPreset.label}</span>
+        </div>
+        <input
+          id="export-quality-slider"
+          className="quality-slider-range"
+          type="range"
+          min={IMAGE_QUALITY_MIN}
+          max={IMAGE_QUALITY_MAX}
+          step="1"
+          value={imageQualityLevel}
+          onChange={(event) => setImageQualityLevel(Number(event.target.value))}
+        />
+        <div className="quality-slider-hint-row">
+          <span className="field-hint">更小更快</span>
+          <span className="field-hint">更清晰更大</span>
+        </div>
+      </div>
+
+      <div className="settings-block">
+        <div className="field-row">
+          <label className="field-label">样式预设</label>
+          <div className="card-actions">
+            <button
+              type="button"
+              className="button button-ghost button-small"
+              onClick={handleDuplicateStyle}
+              disabled={styleBusy || !styleDraftCss}
+            >
+              新建样式
+            </button>
+            <button
+              type="button"
+              className="button button-ghost button-small"
+              onClick={() => styleImportInputRef.current && styleImportInputRef.current.click()}
+              disabled={styleBusy}
+            >
+              导入CSS
+            </button>
+          </div>
+        </div>
+
+        <input
+          ref={styleImportInputRef}
+          type="file"
+          accept=".css,text/css"
+          className="hidden-input"
+          onChange={handleImportStyle}
+        />
+
+        <div
+          ref={stylePickerRef}
+          className={`style-picker ${stylePickerOpen ? "style-picker-open" : ""}`}
+        >
+          <button
+            type="button"
+            className="style-picker-trigger"
+            onClick={() => {
+              if (exportConfig.loading || exportConfig.styles.length === 0) {
+                return;
+              }
+              setStylePickerOpen((current) => !current);
+            }}
+            disabled={exportConfig.loading || exportConfig.styles.length === 0}
+            aria-haspopup="listbox"
+            aria-expanded={stylePickerOpen ? "true" : "false"}
+          >
+            <span>{activeStyleLabel}</span>
+            <span className="style-picker-caret">{stylePickerOpen ? "▲" : "▼"}</span>
+          </button>
+
+          {stylePickerOpen ? (
+            <div className="style-picker-menu" role="listbox" aria-label="样式预设">
+              {exportConfig.styles.map((style) => {
+                const selected = style.id === activeStyleId;
+                return (
+                  <button
+                    key={style.id}
+                    type="button"
+                    role="option"
+                    aria-selected={selected ? "true" : "false"}
+                    className={`style-picker-option ${selected ? "style-picker-option-selected" : ""}`}
+                    onClick={() => handleSelectStyle(style.id)}
+                  >
+                    <span>{style.name}</span>
+                    <span className="style-picker-tag">{style.builtin ? "内置" : "用户"}</span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
+
+        <input
+          className="text-input"
+          value={styleDraftName}
+          onChange={(event) => setStyleDraftName(event.target.value)}
+          placeholder="样式名称"
+        />
+
+        <textarea
+          className="style-editor"
+          value={styleDraftCss}
+          onChange={(event) => setStyleDraftCss(event.target.value)}
+          spellCheck={false}
+          placeholder="在这里编辑CSS样式"
+        />
+
+        <div className="card-actions">
+          <button
+            type="button"
+            className="button button-primary"
+            onClick={handleSaveStyle}
+            disabled={styleBusy || !styleDraftCss}
+          >
+            {activeStyleMeta && activeStyleMeta.builtin ? "另存为新样式" : "保存样式"}
+          </button>
+          <button
+            type="button"
+            className="button button-danger"
+            onClick={handleDeleteStyle}
+            disabled={styleBusy || !activeStyleMeta || activeStyleMeta.builtin}
+          >
+            删除样式
+          </button>
+        </div>
+
+        {styleMessage ? <p className="success-text">{styleMessage}</p> : null}
+        {styleError ? <p className="error-text">{styleError}</p> : null}
+      </div>
+
+      <div className="settings-block">
+        <div className="field-row">
+          <label className="field-label">字体库</label>
+          <button
+            type="button"
+            className="button button-ghost button-small"
+            onClick={() => fontUploadInputRef.current && fontUploadInputRef.current.click()}
+            disabled={fontBusy}
+          >
+            选择字体
+          </button>
+        </div>
+
+        <input
+          ref={fontUploadInputRef}
+          type="file"
+          accept=".ttf,.otf,.woff,.woff2"
+          className="hidden-input"
+          onChange={handleChooseFontFile}
+        />
+
+        {pendingFontFile ? (
+          <div className="font-upload-draft">
+            <p className="muted-text">待上传: {pendingFontFile.name}</p>
+            <input
+              className="text-input"
+              value={pendingFontFamily}
+              onChange={(event) => setPendingFontFamily(event.target.value)}
+              placeholder="字体家族名"
+            />
+            <div className="field-split">
+              <input
+                className="text-input"
+                type="number"
+                min="100"
+                max="900"
+                step="100"
+                value={pendingFontWeight}
+                onChange={(event) => setPendingFontWeight(Number(event.target.value || 400))}
+              />
+              <select
+                className="text-input"
+                value={pendingFontStyle}
+                onChange={(event) => setPendingFontStyle(event.target.value)}
+              >
+                <option value="normal">normal</option>
+                <option value="italic">italic</option>
+              </select>
+            </div>
+            <button
+              type="button"
+              className="button button-primary"
+              onClick={handleUploadFont}
+              disabled={fontBusy}
+            >
+              上传字体
+            </button>
+          </div>
+        ) : null}
+
+        {exportConfig.fonts.length === 0 ? (
+          <p className="muted-text">暂无自定义字体。</p>
+        ) : (
+          <ul className="asset-list">
+            {exportConfig.fonts.map((font) => (
+              <li key={font.id} className="asset-item">
+                <div className="asset-meta">
+                  <strong>{formatFontLabel(font)}</strong>
+                  <span>{font.fileName}</span>
+                </div>
+                <button
+                  type="button"
+                  className="button button-danger button-small"
+                  onClick={() => handleDeleteFont(font.id)}
+                  disabled={fontBusy}
+                >
+                  删除
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {fontMessage ? <p className="success-text">{fontMessage}</p> : null}
+        {fontError ? <p className="error-text">{fontError}</p> : null}
+      </div>
+    </div>
+  );
+
   return (
     <div className="app-shell">
-      <header className="shell-header">
-        <div>
-          <h1>万物转PDF</h1>
-          <p>{subtitle}</p>
-        </div>
-      </header>
-
-      <StepIndicator currentStep={step} />
+      {themeCssText ? <style>{themeCssText}</style> : null}
 
       <main className="shell-content">
         {step === "select" ? (
           <section className="surface">
             <div className="section-head">
               <div>
-                <h2>按顺序准备文件</h2>
-                <p>点击选择或拖入文件时，都会在当前列表后继续追加。</p>
+                <h2>准备文件</h2>
               </div>
               <span className="count-badge">{selectedFiles.length}个文件</span>
             </div>
@@ -517,7 +1300,7 @@ function App() {
                 accept=".doc,.docx,.rtf,.xls,.xlsx,.csv,.ppt,.pptx,.md,.markdown,.html,.htm,.txt,.xml,.json,.rs,.py,.js,.ts,.epub,image/*"
               />
               <span className="dropzone-title">点击选择或拖入文件</span>
-              <small>支持文档、表格、图片、代码与电子书，可增量追加</small>
+              <small>支持Office文档、Markdown、图片、代码、表格、EPUB等</small>
             </label>
 
             <FileQueue
@@ -533,48 +1316,27 @@ function App() {
 
         {step === "converting" ? (
           <section className="surface">
-            <div className="result-summary">
-              <div className="summary-chip">
-                <span>总数</span>
-                <strong>{documents.length}</strong>
-              </div>
-              <div className="summary-chip">
-                <span>成功</span>
-                <strong>{successCount}</strong>
-              </div>
-              <div className="summary-chip">
-                <span>失败</span>
-                <strong>{errorCount}</strong>
-              </div>
+            <div className="summary-row">
+              <span>{documents.length}个文件</span>
+              <span>{successCount}个成功</span>
+              <span>{errorCount}个失败</span>
             </div>
 
-            <div className="progress-card">
-              <h2>正在转换</h2>
-              <p>{progressText}</p>
-              <dl className="progress-grid">
-                <div>
-                  <dt>当前文件</dt>
-                  <dd>{processingDoc ? processingDoc.name : currentProgress?.fileName || "准备中"}</dd>
-                </div>
-                <div>
-                  <dt>当前阶段</dt>
-                  <dd>{currentProgress?.stage || "处理中"}</dd>
-                </div>
-              </dl>
-            </div>
+            <ProgressCard
+              percent={displayConversionPercent}
+              fileName={conversionProgress.fileName}
+              actionLabel={conversionProgress.actionLabel}
+            />
 
             <div className="detail-block">
               <div className="detail-head">
-                <div>
-                  <h2>文件明细</h2>
-                  <p>展开后可查看每个文件的处理状态。</p>
-                </div>
+                <h2>文件明细</h2>
                 <button
                   type="button"
                   className="button button-secondary"
                   onClick={() => setShowStatusDetails((value) => !value)}
                 >
-                  {showStatusDetails ? "收起文件明细" : "展开文件明细"}
+                  {showStatusDetails ? "收起明细" : "展开明细"}
                 </button>
               </div>
 
@@ -585,104 +1347,141 @@ function App() {
 
         {step === "result" ? (
           <section className="surface result-surface">
-            <div className="result-summary">
-              <div className="summary-chip">
-                <span>成功文件</span>
-                <strong>{successCount}</strong>
+            <div className="result-toolbar">
+              <div className="summary-row">
+                <span>{successCount}个成功</span>
+                <span>{errorCount}个失败</span>
+                <span>{previewModel.totalContentSections}段正文</span>
               </div>
-              <div className="summary-chip">
-                <span>失败文件</span>
-                <strong>{errorCount}</strong>
-              </div>
-              <div className="summary-chip">
-                <span>可导入正文</span>
-                <strong>{previewModel.totalContentSections}</strong>
-              </div>
-            </div>
 
-            <div className="message-stack">
-              <p className="muted-text">{saveProgressText}</p>
-              {saveError ? (
-                <p className="error-text">
-                  导入失败: command={saveError.command}, chunkIndex={saveError.chunkIndex}, message={saveError.message}
-                </p>
-              ) : null}
-              {lastSavedInfo && lastSavedInfo.savedPath ? (
-                <p className="success-text">已写入: {lastSavedInfo.savedPath}</p>
-              ) : null}
-            </div>
-
-            <div className="detail-block">
-              <div className="detail-head">
-                <div>
-                  <h2>文件明细</h2>
-                  <p>只在需要排查失败或warning时展开查看。</p>
-                </div>
+              <div className="card-actions">
                 <button
                   type="button"
                   className="button button-secondary"
-                  onClick={() => setShowStatusDetails((value) => !value)}
+                  onClick={openSettingsDrawer}
                 >
-                  {showStatusDetails ? "收起文件明细" : "展开文件明细"}
+                  导出设置
                 </button>
-              </div>
-
-              {!showStatusDetails ? (
-                <p className="collapsed-note">
-                  {errorCount > 0 ? `有${errorCount}个失败文件，可展开查看原因。` : "全部成功，无需排查。"}
-                </p>
-              ) : (
-                <DocumentStatusList documents={documents} />
-              )}
-            </div>
-
-            <div className="preview-card">
-              <div className="preview-card-head">
-                <div>
-                  <h2>正文预览</h2>
-                  <p>
-                    {showFullPreview || !compactPreviewModel.hasHiddenContentSections
-                      ? "当前显示完整正文内容"
-                      : `当前显示前${compactPreviewModel.visibleContentSections}个正文片段`}
-                  </p>
-                </div>
-
-                <div className="card-actions">
-                  {showPreview && compactPreviewModel.hasHiddenContentSections ? (
-                    <button
-                      type="button"
-                      className="button button-ghost"
-                      onClick={() => setShowFullPreview((value) => !value)}
-                    >
-                      {showFullPreview ? "收起详细预览" : "展开全部预览"}
-                    </button>
-                  ) : null}
+                {compactPreviewModel.hasHiddenContentSections ? (
                   <button
                     type="button"
                     className="button button-secondary"
-                    onClick={() => setShowPreview((value) => !value)}
+                    onClick={() => setShowFullPreview((value) => !value)}
                   >
-                    {showPreview ? "收起正文预览" : "展开正文预览"}
+                    {showFullPreview ? "收起到精简预览" : "展开全部预览"}
                   </button>
-                </div>
+                ) : null}
               </div>
+            </div>
 
-              {!showPreview ? (
-                <p className="collapsed-note">
-                  {previewModel.totalContentSections > 0
-                    ? "正文预览已折叠，展开后可查看可导入内容。"
-                    : "没有成功转换的正文内容。"}
-                </p>
-              ) : (
-                <div className="preview-scroll">
-                  <MergedPreview
-                    model={activePreviewModel}
-                    variant="panel"
-                    rootId="result-preview-root"
-                    emptyText="没有成功转换的正文内容，暂时无法预览。"
+            {hasSaveAttempt ? (
+              <div className="save-status-block">
+                {saveProgressModel && (isSaving || (lastSavedInfo && saveProgress && saveProgress.phase === "done")) ? (
+                  <ProgressCard
+                    percent={displaySavePercent}
+                    fileName={saveProgressModel.fileName}
+                    actionLabel={saveProgressModel.actionLabel}
                   />
+                ) : null}
+
+                {saveError ? (
+                  <p className="error-text">
+                    导入失败: command={saveError.command}, chunkIndex={saveError.chunkIndex}, message={saveError.message}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+
+            <div className="result-main-stack">
+              <section className="preview-stage">
+                <div className="preview-stage-head">
+                  <div className="preview-stage-title">
+                    <h2>正文预览</h2>
+                  </div>
+
+                  <div className="preview-stage-tools">
+                    <div className="preview-zoom-control">
+                      <span className="preview-zoom-label">缩放</span>
+                      <button
+                        type="button"
+                        className="button button-ghost button-small"
+                        onClick={() => adjustPreviewZoom(-PREVIEW_ZOOM_STEP)}
+                        disabled={previewZoomLevel <= PREVIEW_ZOOM_MIN}
+                      >
+                        缩小
+                      </button>
+                      <input
+                        className="preview-zoom-range"
+                        type="range"
+                        min={PREVIEW_ZOOM_MIN}
+                        max={PREVIEW_ZOOM_MAX}
+                        step={PREVIEW_ZOOM_STEP}
+                        value={previewZoomLevel}
+                        onChange={(event) => setPreviewZoomLevel(clampPreviewZoom(event.target.value))}
+                        aria-label="调整预览缩放"
+                      />
+                      <button
+                        type="button"
+                        className="button button-ghost button-small"
+                        onClick={() => adjustPreviewZoom(PREVIEW_ZOOM_STEP)}
+                        disabled={previewZoomLevel >= PREVIEW_ZOOM_MAX}
+                      >
+                        放大
+                      </button>
+                      <button
+                        type="button"
+                        className="button button-secondary button-small"
+                        onClick={resetPreviewZoom}
+                        disabled={previewZoomLevel === 100}
+                      >
+                        100%
+                      </button>
+                      <span className="preview-zoom-value">{previewZoomLevel}%</span>
+                    </div>
+                  </div>
                 </div>
-              )}
+
+                <div className="preview-stage-body">
+                  <div className="preview-viewport" ref={previewViewportRef}>
+                    <div className="preview-zoom-shell" style={previewZoomShellStyle}>
+                      <div
+                        className="preview-zoom-stage"
+                        style={previewZoomStageStyle}
+                      >
+                        <MergedPreview
+                          model={activePreviewModel}
+                          variant="panel"
+                          rootId="result-preview-root"
+                          emptyText="没有成功转换的正文内容。"
+                          styleId={activeStyleId || "default"}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              {problemDocuments.length > 0 ? (
+                <div className="detail-block">
+                  <div className="detail-head">
+                    <div>
+                      <h2>异常与警告</h2>
+                      <p>{errorCount}个失败，{warningCount}条警告</p>
+                    </div>
+                    <button
+                      type="button"
+                      className="button button-secondary"
+                      onClick={() => setShowStatusDetails((value) => !value)}
+                    >
+                      {showStatusDetails ? "收起" : "展开"}
+                    </button>
+                  </div>
+
+                  {showStatusDetails ? (
+                    <DocumentStatusList documents={documents} problemsOnly />
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           </section>
         ) : null}
@@ -749,7 +1548,43 @@ function App() {
 
       {previewModel.printableSections.length > 0 ? (
         <div className="export-render-host" aria-hidden="true">
-          <MergedPreview model={previewModel} variant="export" rootId="export-print-root" />
+          <MergedPreview
+            model={previewModel}
+            variant="export"
+            rootId="export-print-root"
+            styleId={activeStyleId || "default"}
+          />
+        </div>
+      ) : null}
+
+      {step === "result" ? (
+        <div className={`drawer-layer ${settingsDrawerOpen ? "drawer-layer-open" : ""}`}>
+          <button
+            type="button"
+            className="drawer-backdrop"
+            aria-label="关闭导出设置"
+            onClick={closeSettingsDrawer}
+          />
+          <aside
+            className={`drawer-panel ${settingsDrawerOpen ? "drawer-panel-open" : ""}`}
+            aria-hidden={settingsDrawerOpen ? "false" : "true"}
+          >
+            <div className="drawer-head">
+              <div>
+                <h2>导出设置</h2>
+              </div>
+              <button
+                type="button"
+                className="button button-ghost button-small"
+                onClick={closeSettingsDrawer}
+              >
+                关闭
+              </button>
+            </div>
+            <div className="drawer-body">
+              {exportSettingsContent}
+            </div>
+          </aside>
         </div>
       ) : null}
     </div>

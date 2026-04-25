@@ -35,7 +35,9 @@ function configureMarked() {
 export function renderMarkdownToHtml(markdown) {
   configureMarked();
   const raw = marked.parse(String(markdown || ""));
-  return sanitizeHtml(String(raw || ""));
+  return sanitizeHtml(String(raw || ""), {
+    allowClass: true,
+  });
 }
 
 export function renderPlainPreformatted(text) {

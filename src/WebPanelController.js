@@ -212,7 +212,7 @@ var __MN_WEB_API_MNImportEverythingAddon = (function () {
   }
 
   function setupWebPanelUI(controller) {
-    controller.navigationItem.title = "WebTemplate";
+    controller.navigationItem.title = "Import Everything";
     controller.view.backgroundColor = UIColor.clearColor();
     controller.view.layer.shadowOffset = { width: 0, height: 2 };
     controller.view.layer.shadowRadius = 4;
@@ -240,7 +240,7 @@ var __MN_WEB_API_MNImportEverythingAddon = (function () {
     controller.titleBar.autoresizingMask = (1 << 1);
 
     controller.titleLabel = new UILabel({ x: 40, y: 0, width: initWidth - 80, height: TITLE_HEIGHT });
-    controller.titleLabel.text = "WebTemplate";
+    controller.titleLabel.text = "Import Everything";
     controller.titleLabel.textAlignment = 1;
     controller.titleLabel.font = UIFont.boldSystemFontOfSize(14);
     controller.titleLabel.textColor = UIColor.darkGrayColor();

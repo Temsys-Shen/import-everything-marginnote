@@ -1,3 +1,5 @@
+JSB.require("BinaryTransferStore");
+JSB.require("ExportConfigStore");
 JSB.require("WebDevServerConfig");
 JSB.require("WebBridgeCommands");
 JSB.require("WebPanelController");

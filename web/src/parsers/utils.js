@@ -1,18 +1,34 @@
 import DOMPurify from "dompurify";
 
 function buildSanitizeConfig(options = {}) {
+  const allowClass = options.allowClass === true;
+  const richHtmlConfig = {
+    USE_PROFILES: { html: true, svg: true, svgFilters: true },
+    ADD_ATTR: ["style", "class"],
+    ALLOW_DATA_ATTR: true,
+    ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel|data):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i,
+  };
+
   if (options.mode === "presentation") {
+    return richHtmlConfig;
+  }
+
+  if (options.mode === "rich-document") {
     return {
-      USE_PROFILES: { html: true, svg: true, svgFilters: true },
-      ADD_ATTR: ["style", "class"],
-      ALLOW_DATA_ATTR: true,
-      ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel|data):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i,
+      ...richHtmlConfig,
+      ADD_TAGS: ["style"],
     };
   }
 
-  return {
+  const config = {
     USE_PROFILES: { html: true },
   };
+
+  if (allowClass) {
+    config.ADD_ATTR = ["class"];
+  }
+
+  return config;
 }
 
 export function sanitizeHtml(html, options = {}) {
