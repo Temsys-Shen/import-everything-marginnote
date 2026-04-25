@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@jvmr/pptx-to-html':
+        specifier: ^1.0.1
+        version: 1.0.1
       dompdf.js:
         specifier: ^1.2.0
         version: 1.2.0
@@ -32,9 +35,6 @@ importers:
       marked:
         specifier: ^18.0.2
         version: 18.0.2
-      pptxjs:
-        specifier: ^0.0.0
-        version: 0.0.0
       rtf.js:
         specifier: ^3.0.9
         version: 3.0.9
@@ -100,6 +100,9 @@ packages:
 
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
+
+  '@jvmr/pptx-to-html@1.0.1':
+    resolution: {integrity: sha512-4Qdm38YdbUgBj9bj4g0fab1+cFSAST8mhefxuHSN21pUCQ7x3QQ6//MH3rsZM+RiLhUJc/LkAljewwqW3LSpjw==}
 
   '@napi-rs/wasm-runtime@1.1.4':
     resolution: {integrity: sha512-3NQNNgA1YSlJb/kMH1ildASP9HW7/7kYnRI2szWJaofaS1hWmbGI4H+d3+22aGzXXN9IJ+n+GiFVcGipJP18ow==}
@@ -613,9 +616,6 @@ packages:
     resolution: {integrity: sha512-pMMHxBOZKFU6HgAZ4eyGnwXF/EvPGGqUr0MnZ5+99485wwW41kW91A4LOGxSHhgugZmSChL5AlElNdwlNgcnLQ==}
     engines: {node: ^10 || ^12 || >=14}
 
-  pptxjs@0.0.0:
-    resolution: {integrity: sha512-EycbVCEkBbZNw4TVQGZy5b0lUB7C9n4g6JhuVQsWHIW5KFGkMSZFx/J3E+cf3KI9Fw15oHxjNhmPm8BNKstncw==}
-
   process-nextick-args@2.0.1:
     resolution: {integrity: sha512-3ouUOpQhtgrbOa17J7+uxOTpITYWaGP7/AhoR3+A+/1e9skrzelGi/dXzEYyvbxubEF6Wn2ypscTKiKJFFn1ag==}
 
@@ -878,6 +878,10 @@ snapshots:
     dependencies:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
+
+  '@jvmr/pptx-to-html@1.0.1':
+    dependencies:
+      jszip: 3.10.1
 
   '@napi-rs/wasm-runtime@1.1.4(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)':
     dependencies:
@@ -1334,8 +1338,6 @@ snapshots:
       nanoid: 3.3.11
       picocolors: 1.1.1
       source-map-js: 1.2.1
-
-  pptxjs@0.0.0: {}
 
   process-nextick-args@2.0.1: {}
 

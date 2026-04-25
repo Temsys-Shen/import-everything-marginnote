@@ -25,6 +25,7 @@
     "template": "web"
   },
   "dependencies": {
+    "@jvmr/pptx-to-html": "^1.0.1",
     "dompdf.js": "^1.2.0",
     "dompurify": "^3.4.1",
     "epubjs": "^0.3.93",
@@ -33,7 +34,6 @@
     "jszip": "^3.10.1",
     "mammoth": "^1.12.0",
     "marked": "^18.0.2",
-    "pptxjs": "^0.0.0",
     "rtf.js": "^3.0.9",
     "xlsx": "^0.18.5"
   }

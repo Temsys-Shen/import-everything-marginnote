@@ -1,9 +1,22 @@
 import DOMPurify from "dompurify";
 
-export function sanitizeHtml(html) {
-  return DOMPurify.sanitize(html, {
+function buildSanitizeConfig(options = {}) {
+  if (options.mode === "presentation") {
+    return {
+      USE_PROFILES: { html: true, svg: true, svgFilters: true },
+      ADD_ATTR: ["style", "class"],
+      ALLOW_DATA_ATTR: true,
+      ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel|data):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i,
+    };
+  }
+
+  return {
     USE_PROFILES: { html: true },
-  });
+  };
+}
+
+export function sanitizeHtml(html, options = {}) {
+  return DOMPurify.sanitize(html, buildSanitizeConfig(options));
 }
 
 export function escapeHtml(text) {
