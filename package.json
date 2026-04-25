@@ -2,6 +2,7 @@
   "name": "import-everything",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "scripts": {
     "build": "node scripts/build-release.js",
     "dev": "node scripts/dev-web.js",

@@ -1,79 +1,84 @@
-# Web插件开发模板
+# Import Everything
 
-用于MarginNote4的Web插件工程模板。模板内置React+Vite前端与WebView面板桥接。
 
-## 开始开发
+![MarginNote](https://img.shields.io/badge/MarginNote-4.2.3%2B-3A7AFE)
 
-安装依赖：
+Import Everything是一个MarginNote4插件，用来把常见文档、表格、演示文稿、Markdown、代码和图片整理成统一预览，然后导出为PDF并导入到MarginNote。
+
+## What it does
+
+- 拖入多个文件
+- 在面板里统一预览
+- 合并导出为PDF
+- 一键导入到MarginNote文档
+- 支持导入CSS样式
+- 支持上传自定义字体
+
+## Supported files
+
+- 文档: `docx` `rtf`
+- 表格: `xls` `xlsx` `csv`
+- 演示文稿: `pptx`
+- 标记与网页: `md` `markdown` `html` `htm` `xhtml`
+- 电子书: `epub`
+- 纯文本: `txt`
+- 代码: `js` `ts` `py` `rs` `java` `go`等常见源码文件
+- 图片: `png` `jpg` `jpeg` `gif` `webp` `bmp` `tif` `tiff` `svg` `ico` `avif` `heic` `heif`
+
+暂不支持: `doc`、`ppt`
+
+## Development
+
+项目使用[MN Rails](https://www.npmjs.com/package/mn-rails)创建
+
+要求:
+
+- macOS
+- MarginNote4.2.3+
+- Node.js20+
+- `pnpm`9+
+
+安装依赖:
 
 ```bash
 pnpm install
-# 或(使用npm时)
-npm install
 ```
 
-开发模式：
+启动开发:
 
 ```bash
 pnpm dev
-# 或(使用npm时)
-npm run dev
 ```
 
-说明：启动Vitedevserver。修改 `web/`下前端代码时由Vite自己reload；修改 `src/`下插件代码时会自动重新部署插件并重启MarginNote。
 
-## 打包发布
 
-执行 `build`会先运行发布态Web构建，把UIWebView兼容的经典离线资源输出到 `src/web-dist`，再打包成 `.mnaddon`：
+打包发布:
 
 ```bash
 pnpm build
-# 或(使用npm时)
-npm run build
 ```
 
-## 常用命令
+## Project layout
 
-更新版本号时会同时修改 `package.json`和 `src/mnaddon.json`：
-
-```bash
-pnpm version:patch
-pnpm version:minor
-pnpm version:major
+```text
+src/        MarginNote插件代码
+web/        React面板源码
+scripts/    构建、热部署、版本脚本
+dist/       打包中间产物
 ```
 
-如果当前目录是干净的git工作区，会自动创建commit并打tag，例如 `v0.2.0`。
+## Roadmap
 
-## 桥接协议
+- 补更多格式解析器
+- 优化大文件导入体验
+- 改善预览排版和导出质量
+- 完善错误提示
+- 优化和MN的联动
 
-Web页面与插件层按以下结构通信：
+## Contributing
 
-- `command`：命令名
-- `requestId`：请求ID
-- `payload`：命令参数
-- `error`：错误对象
+欢迎提Issue和PR。
 
-模板示例使用URL拦截桥接：
+## License
 
-- Web调用 `MNBridge.send(command,payload)`
-- 插件侧在 `webView:shouldStartLoadWithRequest:navigationType:`中解析 `mnaddon://bridge?...`
-
-## 面板交互
-
-- 插件面板采用浮动窗口，挂载在 `studyController.view`上
-- 标题栏拖拽可移动窗口
-- 右下角拖拽可缩放窗口
-- 标题栏双击可最大化/还原
-- 右下角双击可居中窗口
-- 窗口位置与大小会保存到 `NSUserDefaults`键 `mn_web_template_frame_config`
-
-## 目录说明
-
-- `src/`：插件代码与打包根目录
-- `src/WebPanelController.js`：浮动面板UI、页面加载与URL scheme入口
-- `src/WebBridgeCommands.js`：bridge命令函数定义，命令名必须与前端 `command`字段一致
-- `src/web-dist/`：发布期静态前端产物目录
-- `web/`：React+Vite源码目录
-- `web/src/lib/mnBridge.js`：前端bridge SDK入口，页面和组件直接从这里import
-- `web/vite.config.js`：开发态Vite配置
-- `web/vite.release.config.js`：发布态Vite配置，输出经典单bundle脚本
+本项目使用MIT License，详见根目录[LICENSE](LICENSE)。
