@@ -1297,10 +1297,9 @@ function App() {
                 type="file"
                 multiple
                 onChange={onFileChange}
-                accept=".doc,.docx,.rtf,.xls,.xlsx,.csv,.ppt,.pptx,.md,.markdown,.html,.htm,.txt,.xml,.json,.rs,.py,.js,.ts,.epub,image/*"
               />
               <span className="dropzone-title">点击选择或拖入文件</span>
-              <small>支持Office文档、Markdown、图片、代码、表格、EPUB等</small>
+              <small>允许选择任意文件类型，文本类文件会自动识别，不支持的二进制文件会在转换时明确提示</small>
             </label>
 
             <FileQueue
