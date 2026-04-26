@@ -67,6 +67,18 @@ function interpolate(start, end, fraction) {
   return start + (end - start) * clampRatio(fraction);
 }
 
+function getStageUpperRatio(meta) {
+  if (!meta || typeof meta !== "object") {
+    return 0;
+  }
+
+  if (Number.isFinite(meta.end)) {
+    return clampRatio(meta.end);
+  }
+
+  return clampRatio(meta.ratio);
+}
+
 export function getConversionStageMeta(stage) {
   return CONVERSION_STAGE_META[stage] || CONVERSION_STAGE_META.parse;
 }
@@ -116,6 +128,7 @@ export function buildConversionProgressModel({ documents, progress, isActive }) 
   if (totalFiles === 0) {
     return {
       targetPercent: 0,
+      stageCapPercent: 0,
       actionLabel: "准备转换",
       fileName: "",
       completedFiles: 0,
@@ -137,19 +150,26 @@ export function buildConversionProgressModel({ documents, progress, isActive }) 
       : "";
 
   let ratio = completedFiles / totalFiles;
+  let stageCapRatio = ratio;
   if (isActive && completedFiles < totalFiles) {
     const inFlightRatio = normalized ? getConversionProgressRatio(normalized) : 0;
+    const currentStageMeta = getConversionStageMeta(normalized ? normalized.stage : "prepare");
+    const currentStageUpperRatio = getStageUpperRatio(currentStageMeta);
     ratio = (completedFiles + inFlightRatio) / totalFiles;
+    stageCapRatio = (completedFiles + currentStageUpperRatio) / totalFiles;
   }
 
   if (completedFiles >= totalFiles) {
     ratio = 1;
+    stageCapRatio = 1;
   } else {
     ratio = clampRatio(isActive ? Math.min(ratio, 0.95) : ratio);
+    stageCapRatio = clampRatio(isActive ? Math.min(stageCapRatio, 0.95) : stageCapRatio);
   }
 
   return {
     targetPercent: ratio * 100,
+    stageCapPercent: stageCapRatio * 100,
     actionLabel,
     fileName,
     completedFiles,
@@ -192,11 +212,63 @@ export function buildImportProgressModel(progress, fileName, isActive) {
     ratio = clampRatio(isActive ? Math.min(ratio, 0.95) : ratio);
   }
 
+  const phaseUpperRatio = getStageUpperRatio(phaseMeta);
+  const stageCapPercent = (normalized.phase === "done" ? 1 : clampRatio(isActive ? Math.min(phaseUpperRatio, 0.95) : phaseUpperRatio)) * 100;
+
+  return {
+    targetPercent: ratio * 100,
+    stageCapPercent,
+    actionLabel: phaseMeta.label,
+    fileName,
+    message: normalized.message || phaseMeta.label,
+  };
+}
+
+const MINDMAP_IMPORT_PHASE_META = {
+  idle: {
+    label: "等待导入",
+    ratio: 0,
+  },
+  import: {
+    label: "导入脑图",
+    ratio: 0,
+  },
+  done: {
+    label: "导入完成",
+    ratio: 1,
+  },
+};
+
+export function getMindmapImportPhaseMeta(phase) {
+  return MINDMAP_IMPORT_PHASE_META[phase] || MINDMAP_IMPORT_PHASE_META.import;
+}
+
+export function buildMindmapImportProgressModel(progress, fileName, isActive) {
+  if (!progress && !isActive) {
+    return null;
+  }
+
+  const normalized = progress || {
+    phase: "idle",
+    current: 0,
+    total: 1,
+    message: "",
+  };
+  const phaseMeta = getMindmapImportPhaseMeta(normalized.phase);
+  const fraction = normalizeFraction(normalized.current, normalized.total);
+  let ratio = fraction !== null ? fraction : clampRatio(phaseMeta.ratio);
+
+  if (normalized.phase === "done") {
+    ratio = 1;
+  }
+
   return {
     targetPercent: ratio * 100,
     actionLabel: phaseMeta.label,
     fileName,
     message: normalized.message || phaseMeta.label,
+    current: Number.isFinite(normalized.current) ? normalized.current : 0,
+    total: Number.isFinite(normalized.total) ? normalized.total : 1,
   };
 }
 
