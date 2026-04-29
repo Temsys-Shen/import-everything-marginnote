@@ -3,8 +3,10 @@ import { useNavigate } from "react-router-dom";
 import PageTopbar from "../components/PageTopbar";
 import ProgressCard from "../components/ProgressCard";
 import MindmapCanvasPreview from "../mindmap/MindmapCanvasPreview";
+import { parseFreeMindFile } from "../mindmap/freemindParser";
 import { buildMindmapImportPreview } from "../mindmap/model";
 import { parseMarkdownMindmapFile } from "../mindmap/markdownMindmapParser";
+import { parseOpmlMindmapFile } from "../mindmap/opmlParser";
 import { parseXmindMindmapFile } from "../mindmap/xmindParser";
 import { buildMindmapImportProgressModel } from "../progress/progressModel";
 import { showAlertMessage } from "../services/exportConfigService";
@@ -27,7 +29,29 @@ function detectMindmapSourceType(file) {
   if (extension === "xmind") {
     return "xmind";
   }
+  if (extension === "mm") {
+    return "freemind";
+  }
+  if (extension === "opml") {
+    return "opml";
+  }
   return "unsupported";
+}
+
+async function parseMindmapFileBySourceType(sourceType, file) {
+  if (sourceType === "markdown") {
+    return parseMarkdownMindmapFile(file);
+  }
+  if (sourceType === "xmind") {
+    return parseXmindMindmapFile(file);
+  }
+  if (sourceType === "freemind") {
+    return parseFreeMindFile(file);
+  }
+  if (sourceType === "opml") {
+    return parseOpmlMindmapFile(file);
+  }
+  throw new Error(`Unsupported source type: ${sourceType}`);
 }
 
 function buildImportSuccessText(result) {
@@ -201,7 +225,7 @@ function MindmapImportPage() {
       setStep("select");
       setParseState({
         loading: false,
-        error: `不支持的脑图文件类型: ${file.name}。当前仅支持Markdown和现代JSON版XMind。`,
+        error: `不支持的脑图文件类型: ${file.name}。当前仅支持Markdown、OPML、FreeMind和现代JSON版XMind。`,
         tree: null,
       });
       setActiveSheetId("");
@@ -216,9 +240,7 @@ function MindmapImportPage() {
     });
 
     try {
-      const tree = sourceType === "markdown"
-        ? await parseMarkdownMindmapFile(file)
-        : await parseXmindMindmapFile(file);
+      const tree = await parseMindmapFileBySourceType(sourceType, file);
       const nextPreview = buildMindmapImportPreview(tree);
 
       setParseState({
@@ -410,7 +432,7 @@ function MindmapImportPage() {
             <label className="upload-dropzone mindmap-dropzone" onDrop={onDrop} onDragOver={onDragOver}>
               <input type="file" onChange={onFileChange} />
               <span className="dropzone-title">点击选择或拖入脑图文件</span>
-              <small>Xmind、Markdown</small>
+              <small>Xmind、Markdown、OPML、FreeMind(.mm)</small>
             </label>
 
             {contextState.loading ? <p className="muted-text">正在读取导入上下文…</p> : null}
