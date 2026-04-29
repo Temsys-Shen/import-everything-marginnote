@@ -3,11 +3,8 @@ import { useNavigate } from "react-router-dom";
 import PageTopbar from "../components/PageTopbar";
 import ProgressCard from "../components/ProgressCard";
 import MindmapCanvasPreview from "../mindmap/MindmapCanvasPreview";
-import { parseFreeMindFile } from "../mindmap/freemindParser";
 import { buildMindmapImportPreview } from "../mindmap/model";
-import { parseMarkdownMindmapFile } from "../mindmap/markdownMindmapParser";
-import { parseOpmlMindmapFile } from "../mindmap/opmlParser";
-import { parseXmindMindmapFile } from "../mindmap/xmindParser";
+import { detectMindmapSourceType, parseMindmapFileBySourceType } from "../mindmap/sourceTypes";
 import { buildMindmapImportProgressModel } from "../progress/progressModel";
 import { showAlertMessage } from "../services/exportConfigService";
 import {
@@ -18,41 +15,6 @@ import {
 } from "../services/mindmapImportService";
 
 const MINDMAP_IMPORT_POLL_MS = 120;
-
-function detectMindmapSourceType(file) {
-  const match = String(file && file.name ? file.name : "").toLowerCase().match(/\.([a-z0-9]+)$/);
-  const extension = match ? match[1] : "";
-
-  if (extension === "md" || extension === "markdown") {
-    return "markdown";
-  }
-  if (extension === "xmind") {
-    return "xmind";
-  }
-  if (extension === "mm") {
-    return "freemind";
-  }
-  if (extension === "opml") {
-    return "opml";
-  }
-  return "unsupported";
-}
-
-async function parseMindmapFileBySourceType(sourceType, file) {
-  if (sourceType === "markdown") {
-    return parseMarkdownMindmapFile(file);
-  }
-  if (sourceType === "xmind") {
-    return parseXmindMindmapFile(file);
-  }
-  if (sourceType === "freemind") {
-    return parseFreeMindFile(file);
-  }
-  if (sourceType === "opml") {
-    return parseOpmlMindmapFile(file);
-  }
-  throw new Error(`Unsupported source type: ${sourceType}`);
-}
 
 function buildImportSuccessText(result) {
   const count = Number(result && result.createdCount ? result.createdCount : 0);
@@ -225,7 +187,7 @@ function MindmapImportPage() {
       setStep("select");
       setParseState({
         loading: false,
-        error: `不支持的脑图文件类型: ${file.name}。当前仅支持Markdown、OPML、FreeMind和现代JSON版XMind。`,
+        error: `不支持的脑图文件类型: ${file.name}。当前仅支持Markdown、OPML、FreeMind、XMind、MindManager和iThoughts。`,
         tree: null,
       });
       setActiveSheetId("");
@@ -432,7 +394,7 @@ function MindmapImportPage() {
             <label className="upload-dropzone mindmap-dropzone" onDrop={onDrop} onDragOver={onDragOver}>
               <input type="file" onChange={onFileChange} />
               <span className="dropzone-title">点击选择或拖入脑图文件</span>
-              <small>Xmind、Markdown、OPML、FreeMind(.mm)</small>
+              <small>XMind、Markdown、OPML、FreeMind(.mm)、MindManager(.mmap/.xmmap)、iThoughts(.itmz)</small>
             </label>
 
             {contextState.loading ? <p className="muted-text">正在读取导入上下文…</p> : null}

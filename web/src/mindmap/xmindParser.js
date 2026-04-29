@@ -1,5 +1,14 @@
 import JSZip from "jszip";
 import { createMindmapImportNode, createMindmapImportSheet, createMindmapImportTree } from "./model";
+import {
+  findZipEntryByBaseName,
+  getDirectChildElementsByName,
+  getElementText,
+  getFileBaseName,
+  getFirstDirectChildByName,
+  getTrimmedAttribute,
+  parseXmlDocument,
+} from "./xmlMindmapUtils";
 
 function isRecord(value) {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -7,6 +16,10 @@ function isRecord(value) {
 
 function safeJsonParse(rawText) {
   return JSON.parse(String(rawText || "").replace(/^\uFEFF/, ""));
+}
+
+function safeXmlParse(rawText) {
+  return parseXmlDocument(String(rawText || "").replace(/^\uFEFF/, ""), "XMind");
 }
 
 function extractSheetsFromUnknown(value, maxDepth = 6) {
@@ -332,28 +345,134 @@ function extractRootTopicRef(sheet) {
   return null;
 }
 
-export async function parseXmindMindmapFile(file) {
-  let zip;
-  try {
-    zip = await JSZip.loadAsync(file);
-  } catch (error) {
-    throw new Error(`XMind压缩包解析失败: ${error && error.message ? error.message : String(error)}`);
+function normalizeXmindXmlText(element) {
+  return getElementText(element).replace(/\s+/g, " ").trim();
+}
+
+function extractXmindXmlLabels(topicElement) {
+  return getDirectChildElementsByName(topicElement, "labels")
+    .flatMap((labelsElement) => getDirectChildElementsByName(labelsElement, "label"))
+    .map((labelElement) => normalizeXmindXmlText(labelElement))
+    .filter(Boolean);
+}
+
+function extractXmindXmlMarkers(topicElement) {
+  return getDirectChildElementsByName(topicElement, "marker-refs")
+    .flatMap((markerRefsElement) => getDirectChildElementsByName(markerRefsElement, "marker-ref"))
+    .map((markerRefElement) => getTrimmedAttribute(markerRefElement, ["marker-id", "markerId"]))
+    .filter(Boolean);
+}
+
+function extractXmindXmlComment(topicElement) {
+  const notesElement = getFirstDirectChildByName(topicElement, "notes");
+  if (!notesElement) {
+    return "";
   }
 
-  const entryNames = Object.keys(zip.files).sort((left, right) => left.localeCompare(right, "en"));
-  const contentJsonKey = entryNames.find((name) => name.toLowerCase().endsWith("content.json"));
-  if (!contentJsonKey) {
-    throw new Error("XMind文件中未找到content.json。当前首版仅支持现代JSON版XMind。");
+  const plainNote = getFirstDirectChildByName(notesElement, "plain");
+  if (plainNote) {
+    return normalizeXmindXmlText(plainNote);
   }
 
-  let parsed;
-  try {
-    const rawText = await zip.files[contentJsonKey].async("string");
-    parsed = safeJsonParse(rawText);
-  } catch (error) {
-    throw new Error(`content.json解析失败: ${error && error.message ? error.message : String(error)}`);
+  const htmlNote = getFirstDirectChildByName(notesElement, "html");
+  if (htmlNote) {
+    return normalizeXmindXmlText(htmlNote);
   }
 
+  return "";
+}
+
+function extractXmindXmlChildTopics(topicElement, seen) {
+  const childrenElement = getFirstDirectChildByName(topicElement, "children");
+  if (!childrenElement) {
+    return [];
+  }
+
+  return getDirectChildElementsByName(childrenElement, "topics")
+    .flatMap((topicsElement) => getDirectChildElementsByName(topicsElement, "topic"))
+    .map((childTopicElement) => toXmindXmlNode(childTopicElement, seen))
+    .filter(Boolean);
+}
+
+function toXmindXmlNode(topicElement, seen) {
+  const rawId = getTrimmedAttribute(topicElement, ["id"]);
+  const titleElement = getFirstDirectChildByName(topicElement, "title");
+  const text = titleElement ? normalizeXmindXmlText(titleElement) : "";
+  if (!text) {
+    return null;
+  }
+
+  if (rawId) {
+    if (seen.has(rawId)) {
+      return createMindmapImportNode({
+        id: rawId,
+        text,
+      });
+    }
+    seen.add(rawId);
+  }
+
+  return createMindmapImportNode({
+    id: rawId || undefined,
+    text,
+    children: extractXmindXmlChildTopics(topicElement, seen),
+    comment: extractXmindXmlComment(topicElement),
+    style: {
+      labels: extractXmindXmlLabels(topicElement),
+      markers: extractXmindXmlMarkers(topicElement),
+    },
+    sourceMeta: {
+      xmindTopicId: rawId || null,
+      collapsed: getTrimmedAttribute(topicElement, ["branch", "structure-class"]) === "org.xmind.ui.logic.right",
+    },
+  });
+}
+
+function parseLegacyXmindDocument(document, fileName, contentEntry, entryNames) {
+  const sheetElements = Array.from(document.getElementsByTagName("*")).filter(
+    (element) => element && element.localName && String(element.localName).toLowerCase() === "sheet",
+  );
+  if (sheetElements.length === 0) {
+    throw new Error("content.xml中未识别到有效sheet");
+  }
+
+  const importSheets = sheetElements.map((sheetElement, index) => {
+    const titleElement = getFirstDirectChildByName(sheetElement, "title");
+    const topicElement = getFirstDirectChildByName(sheetElement, "topic");
+    if (!topicElement) {
+      throw new Error(`第${index + 1}个sheet缺少root topic`);
+    }
+
+    const root = toXmindXmlNode(topicElement, new Set());
+    if (!root || !root.text) {
+      throw new Error(`第${index + 1}个sheet根节点标题为空`);
+    }
+
+    return createMindmapImportSheet({
+      id: getTrimmedAttribute(sheetElement, ["id"]) || undefined,
+      title: titleElement ? normalizeXmindXmlText(titleElement) : root.text,
+      root,
+      sourceMeta: {
+        sheetIndex: index,
+      },
+    });
+  });
+
+  return createMindmapImportTree({
+    sourceType: "xmind",
+    title: getFileBaseName(fileName, importSheets[0] ? importSheets[0].title : "XMind脑图"),
+    sheets: importSheets,
+    sourceMeta: {
+      fileName,
+      contentEntry,
+      totalSheetCount: importSheets.length,
+      zipEntries: entryNames,
+      xmindVariant: "legacy-xml",
+    },
+  });
+}
+
+function parseModernXmindData(parsed, fileName, contentEntry, entryNames) {
   const sheets = extractSheetsFromUnknown(parsed);
   if (sheets.length === 0) {
     throw new Error("content.json中未识别到有效sheet");
@@ -383,13 +502,52 @@ export async function parseXmindMindmapFile(file) {
 
   return createMindmapImportTree({
     sourceType: "xmind",
-    title: file.name.replace(/\.[^.]+$/, "") || importSheets[0].title,
+    title: getFileBaseName(fileName, importSheets[0] ? importSheets[0].title : "XMind脑图"),
     sheets: importSheets,
     sourceMeta: {
-      fileName: file.name,
-      contentEntry: contentJsonKey,
+      fileName,
+      contentEntry,
       totalSheetCount: sheets.length,
       zipEntries: entryNames,
+      xmindVariant: "modern-json",
     },
   });
+}
+
+export async function parseXmindMindmapFile(file) {
+  let zip;
+  try {
+    zip = await JSZip.loadAsync(file);
+  } catch (error) {
+    throw new Error(`XMind压缩包解析失败: ${error && error.message ? error.message : String(error)}`);
+  }
+
+  const entryNames = Object.keys(zip.files).sort((left, right) => left.localeCompare(right, "en"));
+  const contentJsonKey = findZipEntryByBaseName(entryNames, "content.json");
+  if (contentJsonKey) {
+    let parsed;
+    try {
+      const rawText = await zip.files[contentJsonKey].async("string");
+      parsed = safeJsonParse(rawText);
+    } catch (error) {
+      throw new Error(`content.json解析失败: ${error && error.message ? error.message : String(error)}`);
+    }
+
+    return parseModernXmindData(parsed, file.name, contentJsonKey, entryNames);
+  }
+
+  const contentXmlKey = findZipEntryByBaseName(entryNames, "content.xml");
+  if (!contentXmlKey) {
+    throw new Error("XMind文件中未找到content.json或content.xml");
+  }
+
+  let document;
+  try {
+    const rawText = await zip.files[contentXmlKey].async("string");
+    document = safeXmlParse(rawText);
+  } catch (error) {
+    throw new Error(`content.xml解析失败: ${error && error.message ? error.message : String(error)}`);
+  }
+
+  return parseLegacyXmindDocument(document, file.name, contentXmlKey, entryNames);
 }
