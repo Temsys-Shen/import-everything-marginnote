@@ -108,4 +108,4 @@ describe("parseSimpleMindFile", () => {
 
     await expect(parseSimpleMindFile(file)).rejects.toThrow("SimpleMind解析失败: XML格式无效");
   });
-}
+});
