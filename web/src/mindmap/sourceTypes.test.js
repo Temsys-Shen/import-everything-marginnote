@@ -9,6 +9,7 @@ describe("detectMindmapSourceType", () => {
     expect(detectMindmapSourceType({ name: "map.mmap" })).toBe("mindmanager");
     expect(detectMindmapSourceType({ name: "map.xmmap" })).toBe("mindmanager");
     expect(detectMindmapSourceType({ name: "map.itmz" })).toBe("ithoughts");
+    expect(detectMindmapSourceType({ name: "map.smmx" })).toBe("simplemind");
   });
 
   it("keeps unsupported extensions unsupported", () => {

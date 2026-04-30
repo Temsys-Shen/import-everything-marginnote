@@ -187,7 +187,7 @@ function MindmapImportPage() {
       setStep("select");
       setParseState({
         loading: false,
-        error: `不支持的脑图文件类型: ${file.name}。当前仅支持Markdown、OPML、FreeMind、XMind、MindManager和iThoughts。`,
+        error: `不支持的脑图文件类型: ${file.name}。当前仅支持Markdown、OPML、FreeMind、XMind、MindManager、iThoughts和SimpleMind。`,
         tree: null,
       });
       setActiveSheetId("");
@@ -394,7 +394,7 @@ function MindmapImportPage() {
             <label className="upload-dropzone mindmap-dropzone" onDrop={onDrop} onDragOver={onDragOver}>
               <input type="file" onChange={onFileChange} />
               <span className="dropzone-title">点击选择或拖入脑图文件</span>
-              <small>XMind、Markdown、OPML、FreeMind(.mm)、MindManager(.mmap/.xmmap)、iThoughts(.itmz)</small>
+              <small>XMind、Markdown、OPML、FreeMind(.mm)、MindManager(.mmap/.xmmap)、iThoughts(.itmz)、SimpleMind(.smmx)</small>
             </label>
 
             {contextState.loading ? <p className="muted-text">正在读取导入上下文…</p> : null}

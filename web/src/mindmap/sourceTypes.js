@@ -3,6 +3,7 @@ import { parseIThoughtsFile } from "./iThoughtsParser";
 import { parseMarkdownMindmapFile } from "./markdownMindmapParser";
 import { parseMindManagerFile } from "./mindManagerParser";
 import { parseOpmlMindmapFile } from "./opmlParser";
+import { parseSimpleMindFile } from "./simpleMindParser";
 import { parseXmindMindmapFile } from "./xmindParser";
 
 export function detectMindmapSourceType(file) {
@@ -27,6 +28,9 @@ export function detectMindmapSourceType(file) {
   if (extension === "itmz") {
     return "ithoughts";
   }
+  if (extension === "smmx") {
+    return "simplemind";
+  }
   return "unsupported";
 }
 
@@ -48,6 +52,9 @@ export async function parseMindmapFileBySourceType(sourceType, file) {
   }
   if (sourceType === "ithoughts") {
     return parseIThoughtsFile(file);
+  }
+  if (sourceType === "simplemind") {
+    return parseSimpleMindFile(file);
   }
   throw new Error(`Unsupported source type: ${sourceType}`);
 }
