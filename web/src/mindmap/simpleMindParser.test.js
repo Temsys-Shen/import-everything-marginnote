@@ -108,4 +108,22 @@ describe("parseSimpleMindFile", () => {
 
     await expect(parseSimpleMindFile(file)).rejects.toThrow("SimpleMind解析失败: XML格式无效");
   });
+
+  it("parses smmx xml with utf8 bom and doctype", async () => {
+    const file = await createZipFile("welcome.smmx", {
+      "document/mindmap.xml": `\uFEFF<?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE simplemind-mindmaps>
+        <simplemind-mindmaps doc-version="3">
+          <mindmap>
+            <topics>
+              <topic id="0" text="欢迎" />
+            </topics>
+          </mindmap>
+        </simplemind-mindmaps>`,
+    });
+
+    const result = await parseSimpleMindFile(file);
+
+    expect(result.sheets[0].root.text).toBe("欢迎");
+  });
 });

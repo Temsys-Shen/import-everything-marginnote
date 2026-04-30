@@ -3,8 +3,9 @@ export function getFileBaseName(fileName, fallbackTitle) {
 }
 
 export function parseXmlDocument(rawText, label) {
+  const normalizedText = String(rawText || "").replace(/^\uFEFF/, "");
   const parser = new DOMParser();
-  const document = parser.parseFromString(String(rawText || ""), "text/xml");
+  const document = parser.parseFromString(normalizedText, "text/xml");
   const parserError = document.querySelector("parsererror");
   if (parserError) {
     throw new Error(`${label}解析失败: XML格式无效`);
