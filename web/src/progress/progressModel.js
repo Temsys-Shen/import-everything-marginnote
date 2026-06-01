@@ -212,8 +212,9 @@ export function buildImportProgressModel(progress, fileName, isActive) {
     ratio = clampRatio(isActive ? Math.min(ratio, 0.95) : ratio);
   }
 
-  const phaseUpperRatio = getStageUpperRatio(phaseMeta);
-  const stageCapPercent = (normalized.phase === "done" ? 1 : clampRatio(isActive ? Math.min(phaseUpperRatio, 0.95) : phaseUpperRatio)) * 100;
+  const stageCapPercent = normalized.phase === "done"
+    ? 100
+    : ratio * 100;
 
   return {
     targetPercent: ratio * 100,

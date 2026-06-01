@@ -1,8 +1,9 @@
 import { escapeHtml, toParserError } from "./utils";
+import { registerObjectURLForFile } from "./objectUrlRegistry";
 
 export async function parseImageFile(file) {
   try {
-    const objectURL = URL.createObjectURL(file);
+    const objectURL = registerObjectURLForFile(file, URL.createObjectURL(file));
     return {
       sections: [
         {

@@ -36,6 +36,10 @@ import {
   buildScopedThemeCss,
 } from "../services/exportThemeService";
 import { applyAdaptiveLayout } from "../services/widthAdaptService";
+import {
+  revokeAllObjectURLs,
+  revokeObjectURLsForFiles,
+} from "../parsers/objectUrlRegistry";
 
 function statusLabel(status) {
   if (status === ParseStatus.PENDING) return "待处理";
@@ -313,6 +317,7 @@ function DocumentImportPage() {
   const fontUploadInputRef = useRef(null);
   const stylePickerRef = useRef(null);
   const previewViewportRef = useRef(null);
+  const previousSelectedFilesRef = useRef([]);
 
   const previewModel = useMemo(() => buildMergedPreviewModel(documents), [documents]);
   const compactPreviewModel = useMemo(
@@ -615,6 +620,24 @@ function DocumentImportPage() {
     };
   }, [step, showFullPreview, styleDraftCss, fontRegistry, activePreviewModel, previewZoomLevel]);
 
+  useEffect(() => {
+    const previousFiles = previousSelectedFilesRef.current;
+    const currentIds = new Set(selectedFiles.map(getFileIdentity));
+    const removedFiles = previousFiles.filter((file) => !currentIds.has(getFileIdentity(file)));
+
+    if (removedFiles.length > 0) {
+      revokeObjectURLsForFiles(removedFiles);
+    }
+
+    previousSelectedFilesRef.current = selectedFiles;
+  }, [selectedFiles]);
+
+  useEffect(() => {
+    return () => {
+      revokeAllObjectURLs();
+    };
+  }, []);
+
   async function refreshExportConfig(preferredStyleId = activeStyleId) {
     setExportConfig((current) => ({
       ...current,
@@ -802,6 +825,7 @@ function DocumentImportPage() {
       });
       setLastSavedInfo(result.data || null);
       await notifyImportResult(null);
+      navigate("/", { replace: true });
     } catch (error) {
       const nextSaveError = {
         command: error && error.command ? error.command : "unknown",
@@ -1001,7 +1025,7 @@ function DocumentImportPage() {
     <div className="export-settings-card">
       <div className="detail-head">
         <div>
-          <h2>导出设置</h2>
+          <h2>导入设置</h2>
         </div>
         {exportConfig.loading ? <span className="count-badge">读取中</span> : null}
       </div>
@@ -1019,13 +1043,13 @@ function DocumentImportPage() {
             setIsExportFileNameDirty(true);
           }}
           onBlur={() => setExportFileName((current) => sanitizePdfFileName(current))}
-          placeholder="输入导出PDF名称"
+          placeholder="输入导入PDF名称"
         />
       </div>
 
       <div className="settings-block">
         <div className="quality-slider-head">
-          <label className="field-label" htmlFor="export-quality-slider">导出质量</label>
+          <label className="field-label" htmlFor="export-quality-slider">导入质量</label>
           <span className="quality-slider-value">{activeImageQualityPreset.label}</span>
         </div>
         <input
@@ -1327,7 +1351,7 @@ function DocumentImportPage() {
                   className="button button-secondary"
                   onClick={openSettingsDrawer}
                 >
-                  导出设置
+                  导入设置
                 </button>
                 {compactPreviewModel.hasHiddenContentSections ? (
                   <button
@@ -1541,7 +1565,7 @@ function DocumentImportPage() {
           <button
             type="button"
             className="drawer-backdrop"
-            aria-label="关闭导出设置"
+            aria-label="关闭导入设置"
             onClick={closeSettingsDrawer}
           />
           <aside
@@ -1550,7 +1574,7 @@ function DocumentImportPage() {
           >
             <div className="drawer-head">
               <div>
-                <h2>导出设置</h2>
+                <h2>导入设置</h2>
               </div>
               <button
                 type="button"

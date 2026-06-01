@@ -332,6 +332,7 @@ function MindmapImportPage() {
               message: successMessage,
             });
             await showAlertMessage(successMessage);
+            navigate("/", { replace: true });
             return;
           }
 

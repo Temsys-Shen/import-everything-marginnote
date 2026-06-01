@@ -13,6 +13,16 @@ const BRIDGE_COMMANDS = {
 
 const EXPORT_PAGE_WIDTH = 794;
 const EXPORT_PAGE_HEIGHT = 1123;
+const EXPORT_IMAGE_LOAD_TIMEOUT_MS = 8000;
+const EXPORT_SLOW_IMAGE_WAIT_MS = 500;
+const EXPORT_SLOW_PAGE_RENDER_MS = 400;
+const EXPORT_IMAGE_MAX_DIMENSION_BY_QUALITY = {
+  1: 1200,
+  2: 1440,
+  3: 1680,
+  4: 1920,
+  5: 2240,
+};
 
 const QUALITY_PRESET_MAP = {
   1: { label: "低", scale: 1.0, jpegQuality: 0.58 },
@@ -31,13 +41,33 @@ function createExportError({ command, chunkIndex = null, message, details = null
   };
 }
 
+function getNowMs() {
+  if (typeof performance !== "undefined" && typeof performance.now === "function") {
+    return performance.now();
+  }
+
+  return Date.now();
+}
+
+function logExportEvent(event, details = {}) {
+  console.log(`[ImportEverything][WebView][Export] ${event}`, details);
+}
+
 export function getImageQualityPreset(level) {
   return QUALITY_PRESET_MAP[level] || QUALITY_PRESET_MAP[3];
 }
 
-async function waitForRenderStability() {
-  await new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
-  await new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
+function getExportImageMaxDimension(level) {
+  return EXPORT_IMAGE_MAX_DIMENSION_BY_QUALITY[level] || EXPORT_IMAGE_MAX_DIMENSION_BY_QUALITY[3];
+}
+
+function nextAnimationFrame() {
+  return new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
+}
+
+async function waitForDocumentStability() {
+  await nextAnimationFrame();
+  await nextAnimationFrame();
 
   if (document.fonts && document.fonts.ready) {
     try {
@@ -48,7 +78,298 @@ async function waitForRenderStability() {
   }
 }
 
-function createRenderHost() {
+async function waitForPaintStability() {
+  await nextAnimationFrame();
+}
+
+function isSafeImageSource(src) {
+  const normalized = String(src || "");
+  if (!normalized) {
+    return false;
+  }
+
+  if (
+    normalized.startsWith("data:")
+    || normalized.startsWith("blob:")
+    || normalized.startsWith("file:")
+  ) {
+    return true;
+  }
+
+  try {
+    return new URL(normalized, document.baseURI).origin === window.location.origin;
+  } catch (error) {
+    return false;
+  }
+}
+
+function getImageLoadTimeoutMs(src) {
+  return EXPORT_IMAGE_LOAD_TIMEOUT_MS;
+}
+
+function waitForImageReady(image, timeoutMs = EXPORT_IMAGE_LOAD_TIMEOUT_MS) {
+  if (!image) {
+    return Promise.resolve({ status: "missing" });
+  }
+
+  if (image.complete && image.naturalWidth > 0 && image.naturalHeight > 0) {
+    return Promise.resolve({ status: "ready" });
+  }
+
+  return new Promise((resolve) => {
+    let settled = false;
+    let timerId = null;
+
+    function cleanup() {
+      image.removeEventListener("load", onLoad);
+      image.removeEventListener("error", onError);
+      if (timerId !== null) {
+        clearTimeout(timerId);
+        timerId = null;
+      }
+    }
+
+    function finish(result) {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      cleanup();
+      resolve(result);
+    }
+
+    function onLoad() {
+      finish({ status: "ready" });
+    }
+
+    function onError() {
+      finish({ status: "error" });
+    }
+
+    image.addEventListener("load", onLoad, { once: true });
+    image.addEventListener("error", onError, { once: true });
+
+    timerId = window.setTimeout(() => {
+      finish({ status: "timeout" });
+    }, Math.max(1, Number(timeoutMs) || EXPORT_IMAGE_LOAD_TIMEOUT_MS));
+
+    if (image.complete && image.naturalWidth > 0 && image.naturalHeight > 0) {
+      finish({ status: "ready" });
+    }
+  });
+}
+
+function canvasToBlobUrl(canvas, quality) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        reject(new Error("Failed to encode image canvas"));
+        return;
+      }
+
+      resolve(URL.createObjectURL(blob));
+    }, "image/jpeg", quality);
+  });
+}
+
+async function downsampleImageToBlobUrl(image, maxDimension, quality) {
+  const sourceWidth = Number(image.naturalWidth || image.width || 0);
+  const sourceHeight = Number(image.naturalHeight || image.height || 0);
+  if (!sourceWidth || !sourceHeight) {
+    return null;
+  }
+
+  const largestSide = Math.max(sourceWidth, sourceHeight);
+  if (largestSide <= maxDimension) {
+    return null;
+  }
+
+  const scale = maxDimension / largestSide;
+  const targetWidth = Math.max(1, Math.round(sourceWidth * scale));
+  const targetHeight = Math.max(1, Math.round(sourceHeight * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = targetWidth;
+  canvas.height = targetHeight;
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    throw new Error("Unable to acquire 2D context for image downsampling");
+  }
+
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, targetWidth, targetHeight);
+  ctx.drawImage(image, 0, 0, targetWidth, targetHeight);
+
+  try {
+    const blobUrl = await canvasToBlobUrl(canvas, quality);
+    return {
+      blobUrl,
+      sourceWidth,
+      sourceHeight,
+      targetWidth,
+      targetHeight,
+    };
+  } finally {
+    canvas.width = 0;
+    canvas.height = 0;
+  }
+}
+
+async function optimizeExportImages(sourceElement, cloneElement, options = {}) {
+  const maxDimension = Number(options.maxDimension || getExportImageMaxDimension(3));
+  const jpegQuality = Number(options.jpegQuality || 0.8);
+  const sourceImages = Array.from(sourceElement.querySelectorAll("img"));
+  const cloneImages = Array.from(cloneElement.querySelectorAll("img"));
+  const createdBlobUrls = [];
+  const imageTiming = {
+    waitedMs: 0,
+    downsampledMs: 0,
+  };
+  const report = {
+    totalImages: sourceImages.length,
+    localImages: 0,
+    remoteImages: 0,
+    readyImages: 0,
+    timedOutImages: 0,
+    brokenImages: 0,
+    skippedUnsafeImages: 0,
+    downsampledImages: 0,
+    largestSourceSide: 0,
+  };
+
+  try {
+    const imageStates = await Promise.all(sourceImages.map(async (sourceImage, index) => {
+      const sourceSrc = sourceImage ? String(sourceImage.currentSrc || sourceImage.src || "") : "";
+      const timeoutMs = getImageLoadTimeoutMs(sourceSrc);
+      const sourceWidth = Number(sourceImage && (sourceImage.naturalWidth || sourceImage.width) || 0);
+      const sourceHeight = Number(sourceImage && (sourceImage.naturalHeight || sourceImage.height) || 0);
+      const waitStartedAt = getNowMs();
+      const readiness = await waitForImageReady(sourceImage, timeoutMs);
+      const waitElapsedMs = Math.max(0, Math.round(getNowMs() - waitStartedAt));
+
+      return {
+        index,
+        sourceImage,
+        sourceSrc,
+        sourceWidth,
+        sourceHeight,
+        readiness,
+        waitElapsedMs,
+        timeoutMs,
+      };
+    }));
+
+    imageStates.forEach((state) => {
+      if (!state.sourceImage) {
+        return;
+      }
+
+      const isRemoteImage = /^https?:\/\//i.test(state.sourceSrc);
+      if (isRemoteImage) {
+        report.remoteImages += 1;
+      } else {
+        report.localImages += 1;
+      }
+
+      imageTiming.waitedMs += state.waitElapsedMs;
+      if (state.waitElapsedMs >= EXPORT_SLOW_IMAGE_WAIT_MS) {
+        logExportEvent("image-wait-slow", {
+          index: state.index,
+          waitMs: state.waitElapsedMs,
+          timeoutMs: state.timeoutMs,
+          status: state.readiness.status,
+          src: state.sourceSrc.slice(0, 180),
+        });
+      }
+
+      if (state.readiness.status === "ready") {
+        report.readyImages += 1;
+      } else if (state.readiness.status === "timeout") {
+        report.timedOutImages += 1;
+      } else if (state.readiness.status === "error") {
+        report.brokenImages += 1;
+      }
+    });
+
+    for (let index = 0; index < sourceImages.length; index += 1) {
+      const sourceImage = sourceImages[index];
+      const cloneImage = cloneImages[index];
+      const state = imageStates[index];
+      if (!sourceImage || !cloneImage || !state) {
+        continue;
+      }
+
+      cloneImage.removeAttribute("srcset");
+      cloneImage.removeAttribute("sizes");
+      cloneImage.setAttribute("loading", "eager");
+
+      const { sourceSrc, sourceWidth, sourceHeight, readiness } = state;
+      report.largestSourceSide = Math.max(report.largestSourceSide, sourceWidth, sourceHeight);
+
+      if (/^https?:\/\//i.test(sourceSrc)) {
+        continue;
+      }
+
+      const isLargeImage = Math.max(sourceWidth, sourceHeight) > maxDimension;
+      if (!isLargeImage || !isSafeImageSource(sourceSrc) || readiness.status !== "ready") {
+        if (isLargeImage && !isSafeImageSource(sourceSrc)) {
+          report.skippedUnsafeImages += 1;
+        }
+
+        continue;
+      }
+
+      const downsampleStartedAt = getNowMs();
+      const downsampled = await downsampleImageToBlobUrl(sourceImage, maxDimension, jpegQuality);
+      const downsampleElapsedMs = Math.max(0, Math.round(getNowMs() - downsampleStartedAt));
+      imageTiming.downsampledMs += downsampleElapsedMs;
+      if (downsampleElapsedMs >= EXPORT_SLOW_IMAGE_WAIT_MS) {
+        logExportEvent("image-downsample-slow", {
+          index,
+          durationMs: downsampleElapsedMs,
+          sourceWidth: sourceWidth || null,
+          sourceHeight: sourceHeight || null,
+          targetWidth: downsampled ? downsampled.targetWidth : null,
+          targetHeight: downsampled ? downsampled.targetHeight : null,
+          src: String(sourceSrc).slice(0, 180),
+        });
+      }
+
+      if (!downsampled) {
+        continue;
+      }
+
+      createdBlobUrls.push(downsampled.blobUrl);
+      cloneImage.src = downsampled.blobUrl;
+      cloneImage.removeAttribute("srcset");
+      cloneImage.removeAttribute("sizes");
+      report.downsampledImages += 1;
+    }
+
+    return {
+      cloneElement,
+      createdBlobUrls,
+      report,
+      imageTiming,
+    };
+  } catch (error) {
+    clearTrackedObjectURLs(createdBlobUrls);
+    throw error;
+  }
+}
+
+function clearTrackedObjectURLs(urls) {
+  (Array.isArray(urls) ? urls : []).forEach((objectURL) => {
+    try {
+      URL.revokeObjectURL(objectURL);
+    } catch (error) {
+      console.log(`[ImportEverything] revokeObjectURL failed: ${String(error)}`);
+    }
+  });
+}
+
+function createExportSandbox() {
   const host = document.createElement("div");
   host.style.position = "fixed";
   host.style.left = "-400vw";
@@ -58,6 +379,7 @@ function createRenderHost() {
   host.style.pointerEvents = "none";
   host.style.zIndex = "-1";
   host.style.background = "#ffffff";
+  host.style.contain = "layout paint style";
   document.body.appendChild(host);
   return host;
 }
@@ -69,33 +391,27 @@ function createPageFrame() {
   frame.style.height = `${EXPORT_PAGE_HEIGHT}px`;
   frame.style.overflow = "hidden";
   frame.style.background = "#ffffff";
+  frame.style.contain = "layout paint style";
   return frame;
-}
-
-function createPageContent(sourceElement) {
-  const content = sourceElement.cloneNode(true);
-  content.style.width = `${EXPORT_PAGE_WIDTH}px`;
-  content.style.maxWidth = `${EXPORT_PAGE_WIDTH}px`;
-  content.style.margin = "0";
-  content.style.background = "#ffffff";
-  return content;
-}
-
-function clearElementChildren(element) {
-  while (element.firstChild) {
-    element.removeChild(element.firstChild);
-  }
-}
-
-function replaceElementChild(element, child) {
-  clearElementChildren(element);
-  element.appendChild(child);
 }
 
 function removeElement(element) {
   if (element && element.parentNode) {
     element.parentNode.removeChild(element);
   }
+}
+
+async function prepareExportContent(sourceElement, options = {}) {
+  const content = sourceElement.cloneNode(true);
+  content.style.width = `${EXPORT_PAGE_WIDTH}px`;
+  content.style.maxWidth = `${EXPORT_PAGE_WIDTH}px`;
+  content.style.margin = "0";
+  content.style.background = "#ffffff";
+  content.style.position = "relative";
+  content.style.left = "0";
+  content.style.top = "0";
+
+  return optimizeExportImages(sourceElement, content, options);
 }
 
 async function renderPageCanvas(frame, scale) {
@@ -105,7 +421,7 @@ async function renderPageCanvas(frame, scale) {
     useCORS: true,
     allowTaint: true,
     logging: false,
-    imageTimeout: 0,
+    imageTimeout: EXPORT_IMAGE_LOAD_TIMEOUT_MS,
     width: EXPORT_PAGE_WIDTH,
     height: EXPORT_PAGE_HEIGHT,
     windowWidth: EXPORT_PAGE_WIDTH,
@@ -116,27 +432,66 @@ async function renderPageCanvas(frame, scale) {
 }
 
 async function generatePdfBytesFromElement(element, imageQualityLevel, onMeasureError, onProgress) {
+  const exportStartedAt = getNowMs();
   const cleanupAdaptiveLayout = applyAdaptiveLayout(element, {
     onMeasureError,
   });
 
-  const renderHost = createRenderHost();
+  const renderHost = createExportSandbox();
   const pageFrame = createPageFrame();
   renderHost.appendChild(pageFrame);
+  const qualityPreset = getImageQualityPreset(imageQualityLevel);
+  const createdBlobUrls = [];
 
   try {
-    const measuredContent = createPageContent(element);
-    renderHost.appendChild(measuredContent);
-    await waitForRenderStability();
+    logExportEvent("start", {
+      imageQualityLevel,
+      pageWidth: EXPORT_PAGE_WIDTH,
+      pageHeight: EXPORT_PAGE_HEIGHT,
+    });
 
+    const prepared = await prepareExportContent(element, {
+      maxDimension: getExportImageMaxDimension(imageQualityLevel),
+      jpegQuality: qualityPreset.jpegQuality,
+    });
+    const exportContent = prepared.cloneElement;
+    createdBlobUrls.push(...prepared.createdBlobUrls);
+
+    logExportEvent("image-summary", {
+      ...prepared.report,
+      waitedMs: prepared.imageTiming.waitedMs,
+      downsampledMs: prepared.imageTiming.downsampledMs,
+      maxDimension: getExportImageMaxDimension(imageQualityLevel),
+      jpegQuality: qualityPreset.jpegQuality,
+    });
+
+    renderHost.appendChild(exportContent);
+    const documentStabilityStartedAt = getNowMs();
+    await waitForDocumentStability();
+    logExportEvent("document-stability", {
+      durationMs: Math.max(0, Math.round(getNowMs() - documentStabilityStartedAt)),
+    });
+
+    const measureStartedAt = getNowMs();
     const totalHeight = Math.max(
       EXPORT_PAGE_HEIGHT,
-      Math.ceil(measuredContent.getBoundingClientRect().height || measuredContent.scrollHeight || 0),
+      Math.ceil(exportContent.getBoundingClientRect().height || exportContent.scrollHeight || 0),
     );
-    renderHost.removeChild(measuredContent);
+    const measureElapsedMs = Math.max(0, Math.round(getNowMs() - measureStartedAt));
+
+    renderHost.removeChild(exportContent);
+    pageFrame.appendChild(exportContent);
+    exportContent.style.position = "absolute";
+    exportContent.style.left = "0";
+    exportContent.style.top = "0";
 
     const totalPages = Math.max(1, Math.ceil(totalHeight / EXPORT_PAGE_HEIGHT));
-    const qualityPreset = getImageQualityPreset(imageQualityLevel);
+    logExportEvent("layout-ready", {
+      totalHeight,
+      totalPages,
+      measureMs: measureElapsedMs,
+      setupMs: Math.max(0, Math.round(getNowMs() - exportStartedAt)),
+    });
     const pdf = new jsPDF({
       orientation: "p",
       unit: "px",
@@ -156,13 +511,10 @@ async function generatePdfBytesFromElement(element, imageQualityLevel, onMeasure
         });
       }
 
-      const pageContent = createPageContent(element);
-      pageContent.style.position = "absolute";
-      pageContent.style.left = "0";
-      pageContent.style.top = `${-pageIndex * EXPORT_PAGE_HEIGHT}px`;
-      replaceElementChild(pageFrame, pageContent);
+      const pageStartedAt = getNowMs();
+      exportContent.style.top = `${-pageIndex * EXPORT_PAGE_HEIGHT}px`;
+      await waitForPaintStability();
 
-      await waitForRenderStability();
       const canvas = await renderPageCanvas(pageFrame, qualityPreset.scale);
       const imageData = canvas.toDataURL("image/jpeg", qualityPreset.jpegQuality);
 
@@ -173,11 +525,27 @@ async function generatePdfBytesFromElement(element, imageQualityLevel, onMeasure
       pdf.addImage(imageData, "JPEG", 0, 0, EXPORT_PAGE_WIDTH, EXPORT_PAGE_HEIGHT, undefined, "FAST");
       canvas.width = 0;
       canvas.height = 0;
-      clearElementChildren(pageFrame);
+
+      const pageElapsedMs = Math.max(0, Math.round(getNowMs() - pageStartedAt));
+      logExportEvent(pageElapsedMs >= EXPORT_SLOW_PAGE_RENDER_MS ? "page-render-slow" : "page-render", {
+        page: pageIndex + 1,
+        totalPages,
+        durationMs: pageElapsedMs,
+      });
     }
+
+    logExportEvent("finish", {
+      totalPages,
+      totalImages: prepared.report.totalImages,
+      downsampledImages: prepared.report.downsampledImages,
+      timedOutImages: prepared.report.timedOutImages,
+      brokenImages: prepared.report.brokenImages,
+      totalDurationMs: Math.max(0, Math.round(getNowMs() - exportStartedAt)),
+    });
 
     return new Uint8Array(pdf.output("arraybuffer"));
   } finally {
+    clearTrackedObjectURLs(createdBlobUrls);
     cleanupAdaptiveLayout();
     removeElement(renderHost);
   }

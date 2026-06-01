@@ -805,13 +805,27 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
         throw new Error(`Failed to move temp PDF to ${targetPath}`);
       }
 
+      const studyController = studyControllerForContext(context);
+      const notebookId = String(studyController.notebookController ? studyController.notebookController.notebookId : "");
+      if (!notebookId) {
+        throw new Error("current notebookId is unavailable");
+      }
+
       const importResult = appInstance().importDocument(targetPath);
+      const importedDocMd5 = String(importResult || "");
+      if (!importedDocMd5) {
+        throw new Error("importDocument returned an empty document id");
+      }
+
+      studyController.openNotebookAndDocument(notebookId, importedDocMd5);
       __MN_BINARY_TRANSFER_STORE_MNImportEverythingAddon.destroySession(summary.sessionId, "pdf-finalized");
 
       return responseOk("SAVE_PDF_FINALIZE_OK", "File saved and imported", {
         sessionId: summary.sessionId,
         savedPath: targetPath,
         importResult: toBridgePayload(importResult),
+        openedNotebookId: notebookId,
+        openedDocMd5: importedDocMd5,
         expectedByteLength: summary.expectedByteLength,
         finalLength: summary.finalLength,
       });
