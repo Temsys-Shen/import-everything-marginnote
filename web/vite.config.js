@@ -6,6 +6,11 @@ module.exports = defineConfig({
   plugins: [react()],
   root: __dirname,
   base: "./",
+  resolve: {
+    alias: {
+      "@antv/x6": path.resolve(__dirname, "../node_modules/@antv/x6/es/index.js"),
+    },
+  },
   build: {
     outDir: path.resolve(__dirname, "../src/web-dist"),
     emptyOutDir: true,

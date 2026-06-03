@@ -1,3 +1,8 @@
+import {
+  DEFAULT_IMAGE_DISPLAY_PRESET_ID,
+  normalizeImageDisplayPresetId,
+} from "./imageDisplayPresets";
+
 function renderContentSection(section) {
   return (
     <section
@@ -20,6 +25,7 @@ function MergedPreview({
   className = "",
   emptyText = "暂无可预览内容。请先上传并转换文件。",
   styleId = "default",
+  imagePresetId = DEFAULT_IMAGE_DISPLAY_PRESET_ID,
 }) {
   const panelSections = Array.isArray(model.contentSections)
     ? model.contentSections
@@ -27,6 +33,7 @@ function MergedPreview({
 
   const isPanel = variant === "panel";
   const sections = panelSections;
+  const normalizedImagePresetId = normalizeImageDisplayPresetId(imagePresetId);
 
   if (sections.length === 0) {
     return <p className="muted-text">{emptyText}</p>;
@@ -39,6 +46,7 @@ function MergedPreview({
         id={rootId}
         data-export-theme-root="true"
         data-export-style-id={styleId}
+        data-image-preset-id={normalizedImagePresetId}
       >
         {panelSections.map(renderContentSection)}
       </div>
@@ -51,6 +59,7 @@ function MergedPreview({
       id={rootId}
       data-export-theme-root="true"
       data-export-style-id={styleId}
+      data-image-preset-id={normalizedImagePresetId}
     >
       {panelSections.map(renderContentSection)}
     </div>

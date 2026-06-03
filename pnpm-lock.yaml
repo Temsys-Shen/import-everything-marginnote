@@ -8,6 +8,12 @@ importers:
 
   .:
     dependencies:
+      '@antv/x6':
+        specifier: 3.1.7
+        version: 3.1.7
+      '@antv/x6-react-shape':
+        specifier: 3.0.1
+        version: 3.0.1(@antv/x6@3.1.7)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
       '@jvmr/pptx-to-html':
         specifier: ^1.0.1
         version: 1.0.1
@@ -44,6 +50,9 @@ importers:
       rtf.js:
         specifier: ^3.0.9
         version: 3.0.9
+      tslib:
+        specifier: 2.8.1
+        version: 2.8.1
       xlsx:
         specifier: ^0.18.5
         version: 0.18.5
@@ -83,6 +92,17 @@ importers:
         version: 5.0.12(react@19.2.5)
 
 packages:
+
+  '@antv/x6-react-shape@3.0.1':
+    resolution: {integrity: sha512-zLIJ0NMO6R3sXZGKQJKMUEZmaVwNDBxx3jYUMSXE9cZhKsvWV+P8WuiUCtJYNSVTezBLbxYLzrukA/QdQa/sKg==}
+    peerDependencies:
+      '@antv/x6': ^3.x
+      react: '>=18.0.0'
+      react-dom: '>= 18.0.0'
+
+  '@antv/x6@3.1.7':
+    resolution: {integrity: sha512-NLKXtbCK51oLbazfFD0XsD93rMmih08UBW4gAuEyLBpwAqHmHe+vP8VhOZDkl5O9jV1LSv85IJghr9CT5tZjWw==}
+    engines: {node: '>=20.0.0'}
 
   '@asamuzakjp/css-color@5.1.11':
     resolution: {integrity: sha512-KVw6qIiCTUQhByfTd78h2yD1/00waTmm9uy/R7Ck/ctUyAPj+AEDLkQIdJW0T8+qGgj3j5bpNKK7Q3G+LedJWg==}
@@ -477,6 +497,9 @@ packages:
   docx-preview@0.3.7:
     resolution: {integrity: sha512-Lav69CTA/IYZPJTsKH7oYeoZjyg96N0wEJMNslGJnZJ+dMUZK85Lt5ASC79yUlD48ecWjuv+rkcmFt6EVPV0Xg==}
 
+  dom-align@1.12.4:
+    resolution: {integrity: sha512-R8LUSEay/68zE5c8/3BDxiTEvgb4xZTF0RKmAHfiEVN3klfIpXfi2/QCoiWPccVQ0J/ZGdz9OjzL4uJEP/MRAw==}
+
   dompurify@3.4.1:
     resolution: {integrity: sha512-JahakDAIg1gyOm7dlgWSDjV4n7Ip2PKR55NIT6jrMfIgLFgWo81vdr1/QGqWtFNRqXP9UV71oVePtjqS2ebnPw==}
 
@@ -694,6 +717,9 @@ packages:
   localforage@1.10.0:
     resolution: {integrity: sha512-14/H1aX7hzBBmmh7sGPd+AOMkkIrHM3Z1PAyGgZigA1H1p5O5ANnMyWzvpAETtG68/dC4pC0ncy3+PPGzXZHPg==}
 
+  lodash-es@4.18.1:
+    resolution: {integrity: sha512-J8xewKD/Gk22OZbhpOVSwcs60zhd95ESDwezOFuA3/099925PdHJ7OFHNTGtajL3AlZkykD32HykiMo+BIBI8A==}
+
   lodash@4.18.1:
     resolution: {integrity: sha512-dMInicTPVE8d1e5otfwmmjlxkZoUpiVLwyeTdUsi/Caj/gfzzblBcCE5sRHV/AsjuCmxWrte2TNGSYuCeCq+0Q==}
 
@@ -725,6 +751,9 @@ packages:
 
   mdn-data@2.27.1:
     resolution: {integrity: sha512-9Yubnt3e8A0OKwxYSXyhLymGW4sCufcLG6VdiDdUGVkPhpqLxlvP5vl1983gQjJl3tqbrM731mjaZaP68AgosQ==}
+
+  mousetrap@1.6.5:
+    resolution: {integrity: sha512-QNo4kEepaIBwiT8CDhP98umTetp+JNfQYBWvC1pc6/OAibuXtRcxZ58Qz8skvEHYvURne/7R8T5VoOI7rDsEUA==}
 
   nanoid@3.3.11:
     resolution: {integrity: sha512-N8SpfPUnUp1bK+PMYW8qSWdl9U+wwNWI4QKxOYDy9JAro3WMX7p2OeVRF9v+347pnakNevPmiHhNmZ2HbFA76w==}
@@ -955,6 +984,10 @@ packages:
   util-deprecate@1.0.2:
     resolution: {integrity: sha512-EPD5q1uXyFxJpCrLnCc1nHnq3gOa6DZBocAIiI2TaSCA7VCJ1UJDMagCzIkXNsUYfD1daK//LTEQ8xiIbrHtcw==}
 
+  utility-types@3.11.0:
+    resolution: {integrity: sha512-6Z7Ma2aVEWisaL6TvBCy7P8rm2LQoPv6dJ7ecIaIixHcwfbJ0x7mWdbcwlIM5IGQxPZSFYeqRCqlOOeKoJYMkw==}
+    engines: {node: '>= 4'}
+
   utrie@1.0.2:
     resolution: {integrity: sha512-1MLa5ouZiOmQzUbjbu9VmjLzn1QLXBhwpUa7kdLUQK+KQ5KA9I1vk5U4YHe/X2Ch7PYnJfWuWT+VbuxbGwljhw==}
 
@@ -1106,6 +1139,19 @@ packages:
         optional: true
 
 snapshots:
+
+  '@antv/x6-react-shape@3.0.1(@antv/x6@3.1.7)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)':
+    dependencies:
+      '@antv/x6': 3.1.7
+      react: 19.2.5
+      react-dom: 19.2.5(react@19.2.5)
+
+  '@antv/x6@3.1.7':
+    dependencies:
+      dom-align: 1.12.4
+      lodash-es: 4.18.1
+      mousetrap: 1.6.5
+      utility-types: 3.11.0
 
   '@asamuzakjp/css-color@5.1.11':
     dependencies:
@@ -1435,6 +1481,8 @@ snapshots:
     dependencies:
       jszip: 3.10.1
 
+  dom-align@1.12.4: {}
+
   dompurify@3.4.1:
     optionalDependencies:
       '@types/trusted-types': 2.0.7
@@ -1672,6 +1720,8 @@ snapshots:
     dependencies:
       lie: 3.1.1
 
+  lodash-es@4.18.1: {}
+
   lodash@4.18.1: {}
 
   lop@0.4.2:
@@ -1708,6 +1758,8 @@ snapshots:
   marks-pane@1.0.9: {}
 
   mdn-data@2.27.1: {}
+
+  mousetrap@1.6.5: {}
 
   nanoid@3.3.11: {}
 
@@ -1924,6 +1976,8 @@ snapshots:
   undici@7.25.0: {}
 
   util-deprecate@1.0.2: {}
+
+  utility-types@3.11.0: {}
 
   utrie@1.0.2:
     dependencies:

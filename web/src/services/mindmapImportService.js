@@ -20,11 +20,33 @@ export async function getMindmapImportContext() {
   return ensureBridgeOk(response, COMMANDS.GET_CONTEXT);
 }
 
-function buildImportPayloadTree(tree, selectedSheetIds) {
+function stripMindmapNodeComments(node) {
+  if (!node || typeof node !== "object") {
+    return node;
+  }
+
+  return {
+    ...node,
+    comment: "",
+    children: Array.isArray(node.children)
+      ? node.children.map((child) => stripMindmapNodeComments(child))
+      : [],
+  };
+}
+
+function shouldStripMarkdownComments(tree, options) {
+  return tree
+    && tree.sourceType === "markdown"
+    && options
+    && options.includeMarkdownContent === false;
+}
+
+export function buildImportPayloadTree(tree, selectedSheetIds, options = {}) {
   if (!tree || typeof tree !== "object") {
     return tree;
   }
 
+  const stripMarkdownComments = shouldStripMarkdownComments(tree, options);
   const normalizedSelectedSheetIds = Array.isArray(selectedSheetIds)
     ? selectedSheetIds.map((sheetId) => String(sheetId))
     : null;
@@ -33,28 +55,37 @@ function buildImportPayloadTree(tree, selectedSheetIds) {
       ? tree.sheets.filter((sheet) => sheet && normalizedSelectedSheetIds.includes(String(sheet.id || "")))
       : tree.sheets
     : [];
+  const payloadSheets = stripMarkdownComments
+    ? filteredSheets.map((sheet) => ({
+      ...sheet,
+      root: stripMindmapNodeComments(sheet && sheet.root ? sheet.root : null),
+    }))
+    : filteredSheets;
+  const payloadRoots = payloadSheets.length > 0
+    ? payloadSheets.map((sheet) => (sheet && sheet.root ? sheet.root : null)).filter(Boolean)
+    : Array.isArray(tree.roots)
+      ? stripMarkdownComments
+        ? tree.roots.map((root) => stripMindmapNodeComments(root))
+        : tree.roots
+      : [];
 
   return {
     ...tree,
-    sheets: filteredSheets,
-    roots: filteredSheets.length > 0
-      ? filteredSheets.map((sheet) => (sheet && sheet.root ? sheet.root : null)).filter(Boolean)
-      : Array.isArray(tree.roots)
-        ? tree.roots
-        : [],
+    sheets: payloadSheets,
+    roots: payloadRoots,
   };
 }
 
-export async function importMindmapTree(tree, selectedSheetIds) {
+export async function importMindmapTree(tree, selectedSheetIds, options = {}) {
   const response = await MNBridge.send(COMMANDS.IMPORT_TREE, {
-    tree: buildImportPayloadTree(tree, selectedSheetIds),
+    tree: buildImportPayloadTree(tree, selectedSheetIds, options),
   });
   return ensureBridgeOk(response, COMMANDS.IMPORT_TREE);
 }
 
-export async function startMindmapImport(tree, selectedSheetIds) {
+export async function startMindmapImport(tree, selectedSheetIds, options = {}) {
   const response = await MNBridge.send(COMMANDS.START_IMPORT, {
-    tree: buildImportPayloadTree(tree, selectedSheetIds),
+    tree: buildImportPayloadTree(tree, selectedSheetIds, options),
   });
   return ensureBridgeOk(response, COMMANDS.START_IMPORT);
 }

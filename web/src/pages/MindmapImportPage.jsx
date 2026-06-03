@@ -55,6 +55,7 @@ function MindmapImportPage() {
   const [activeSheetId, setActiveSheetId] = useState("");
   const [selectedSheetIds, setSelectedSheetIds] = useState([]);
   const [sheetPickerOpen, setSheetPickerOpen] = useState(false);
+  const [includeMarkdownContent, setIncludeMarkdownContent] = useState(true);
   const importPollTimerRef = useRef(null);
   const importTaskIdRef = useRef("");
 
@@ -163,6 +164,7 @@ function MindmapImportPage() {
   async function handleFileSelection(file) {
     clearImportPolling();
     setSelectedFile(file);
+    setIncludeMarkdownContent(true);
     setImportState({
       loading: false,
       error: "",
@@ -258,6 +260,7 @@ function MindmapImportPage() {
     setImportProgress(null);
     setActiveSheetId("");
     setSelectedSheetIds([]);
+    setIncludeMarkdownContent(true);
   }
 
   function onSheetSelectionChange(sheetId, checked) {
@@ -300,7 +303,9 @@ function MindmapImportPage() {
     });
 
     try {
-      const startResult = await startMindmapImport(parseState.tree, selectedSheetIds);
+      const startResult = await startMindmapImport(parseState.tree, selectedSheetIds, {
+        includeMarkdownContent,
+      });
       const taskId = String(startResult.taskId || "");
       if (!taskId) {
         throw new Error("Mindmap import taskId is missing");
@@ -433,7 +438,20 @@ function MindmapImportPage() {
             </div>
 
             <div className="mindmap-sheet-bar">
-              {!isMarkdownPreview ? (
+              {isMarkdownPreview ? (
+                <label className="mindmap-content-toggle">
+                  <input
+                    type="checkbox"
+                    checked={includeMarkdownContent}
+                    disabled={importState.loading}
+                    onChange={(event) => setIncludeMarkdownContent(event.target.checked)}
+                  />
+                  <span>
+                    <strong>包含Markdown正文</strong>
+                    <small>开启后标题下正文会显示在同一节点卡片内，并作为该卡片评论导入。</small>
+                  </span>
+                </label>
+              ) : (
                 <>
                   <div className="mindmap-sheet-selector">
                     {preview.sheets.length > 1 ? (
@@ -478,7 +496,7 @@ function MindmapImportPage() {
                     已选{selectedSheetIds.length}个，共{preview.sheets.length}个
                   </div>
                 </>
-              ) : null}
+              )}
             </div>
 
             <div className={`mindmap-preview-layout ${isMarkdownPreview ? "mindmap-preview-layout-single" : ""}`}>
@@ -518,7 +536,10 @@ function MindmapImportPage() {
                         </div>
                       </div>
                     ) : null}
-                    <MindmapCanvasPreview root={activeSheet.root} />
+                    <MindmapCanvasPreview
+                      root={activeSheet.root}
+                      includeMarkdownContent={!!isMarkdownPreview && includeMarkdownContent}
+                    />
                   </>
                 ) : (
                   <p className="muted-text">当前没有可预览的脑图内容。</p>

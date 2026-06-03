@@ -29,6 +29,8 @@
     "template": "web"
   },
   "dependencies": {
+    "@antv/x6": "3.1.7",
+    "@antv/x6-react-shape": "3.0.1",
     "@jvmr/pptx-to-html": "^1.0.1",
     "docx-preview": "^0.3.7",
     "dompurify": "^3.4.1",
@@ -41,6 +43,7 @@
     "mammoth": "^1.12.0",
     "marked": "^18.0.2",
     "rtf.js": "^3.0.9",
+    "tslib": "2.8.1",
     "xlsx": "^0.18.5"
   }
 }

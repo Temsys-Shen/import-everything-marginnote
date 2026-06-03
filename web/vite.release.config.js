@@ -8,6 +8,11 @@ module.exports = defineConfig({
   define: {
     "process.env.NODE_ENV": JSON.stringify("production"),
   },
+  resolve: {
+    alias: {
+      "@antv/x6": path.resolve(__dirname, "../node_modules/@antv/x6/es/index.js"),
+    },
+  },
   build: {
     outDir: path.resolve(__dirname, "../src/web-dist/assets"),
     emptyOutDir: false,

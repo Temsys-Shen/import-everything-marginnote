@@ -10,6 +10,12 @@ import {
 } from "../preview/mergedPreviewModel";
 import MergedPreview from "../preview/MergedPreview";
 import {
+  DEFAULT_IMAGE_DISPLAY_PRESET_ID,
+  IMAGE_DISPLAY_PRESETS,
+  getImageDisplayPreset,
+  normalizeImageDisplayPresetId,
+} from "../preview/imageDisplayPresets";
+import {
   exportMergedPreviewToDocumentPath,
   getImageQualityPreset,
 } from "../services/exportService";
@@ -307,6 +313,7 @@ function DocumentImportPage() {
   const [exportFileName, setExportFileName] = useState("ImportEverything.pdf");
   const [isExportFileNameDirty, setIsExportFileNameDirty] = useState(false);
   const [imageQualityLevel, setImageQualityLevel] = useState(3);
+  const [imageDisplayPresetId, setImageDisplayPresetId] = useState(DEFAULT_IMAGE_DISPLAY_PRESET_ID);
   const [previewZoomLevel, setPreviewZoomLevel] = useState(100);
   const [previewBaseSize, setPreviewBaseSize] = useState({
     width: 0,
@@ -382,6 +389,10 @@ function DocumentImportPage() {
     () => getImageQualityPreset(imageQualityLevel),
     [imageQualityLevel],
   );
+  const activeImageDisplayPreset = useMemo(
+    () => getImageDisplayPreset(imageDisplayPresetId),
+    [imageDisplayPresetId],
+  );
   const previewZoomScale = previewZoomLevel / 100;
   const previewZoomShellStyle = previewBaseSize.height > 0
     ? {
@@ -410,6 +421,7 @@ function DocumentImportPage() {
   useEffect(() => {
     window.__onPanelShow = () => {
       setImageQualityLevel(3);
+      setImageDisplayPresetId(DEFAULT_IMAGE_DISPLAY_PRESET_ID);
       setPreviewZoomLevel(100);
     };
 
@@ -618,7 +630,7 @@ function DocumentImportPage() {
       window.cancelAnimationFrame(frameId);
       cleanupAdaptiveLayout();
     };
-  }, [step, showFullPreview, styleDraftCss, fontRegistry, activePreviewModel, previewZoomLevel]);
+  }, [step, showFullPreview, styleDraftCss, fontRegistry, activePreviewModel, imageDisplayPresetId, previewZoomLevel]);
 
   useEffect(() => {
     const previousFiles = previousSelectedFilesRef.current;
@@ -1069,6 +1081,30 @@ function DocumentImportPage() {
       </div>
 
       <div className="settings-block">
+        <div className="quality-slider-head">
+          <label className="field-label">图片尺寸</label>
+          <span className="quality-slider-value">{activeImageDisplayPreset.label}</span>
+        </div>
+        <div className="image-preset-grid" role="group" aria-label="图片尺寸预设">
+          {IMAGE_DISPLAY_PRESETS.map((preset) => {
+            const selected = preset.id === imageDisplayPresetId;
+            return (
+              <button
+                key={preset.id}
+                type="button"
+                className={`image-preset-option ${selected ? "image-preset-option-selected" : ""}`}
+                onClick={() => setImageDisplayPresetId(normalizeImageDisplayPresetId(preset.id))}
+                aria-pressed={selected ? "true" : "false"}
+              >
+                <strong>{preset.label}</strong>
+                <span>{preset.description}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="settings-block">
         <div className="field-row">
           <label className="field-label">样式预设</label>
           <div className="card-actions">
@@ -1437,6 +1473,7 @@ function DocumentImportPage() {
                           rootId="result-preview-root"
                           emptyText="没有成功转换的正文内容。"
                           styleId={activeStyleId || "default"}
+                          imagePresetId={imageDisplayPresetId}
                         />
                       </div>
                     </div>
@@ -1536,6 +1573,7 @@ function DocumentImportPage() {
             variant="export"
             rootId="export-print-root"
             styleId={activeStyleId || "default"}
+            imagePresetId={imageDisplayPresetId}
           />
         </div>
       ) : null}
