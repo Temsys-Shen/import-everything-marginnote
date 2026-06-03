@@ -4,7 +4,7 @@ function PageTopbar({ label, onBack, backText = "返回" }) {
       <button type="button" className="button button-ghost button-small" onClick={onBack}>
         {backText}
       </button>
-      <span className="count-badge">{label}</span>
+      <span className="page-topbar-title">{label}</span>
     </header>
   );
 }
