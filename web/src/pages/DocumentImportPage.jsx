@@ -134,6 +134,7 @@ const IMAGE_QUALITY_MAX = 5;
 const PREVIEW_ZOOM_MIN = 50;
 const PREVIEW_ZOOM_MAX = 200;
 const PREVIEW_ZOOM_STEP = 10;
+const PREVIEW_PAGE_WIDTH = 794;
 
 function clampPreviewZoom(value) {
   const normalized = Number(value);
@@ -315,6 +316,7 @@ function DocumentImportPage() {
   const [imageQualityLevel, setImageQualityLevel] = useState(3);
   const [imageDisplayPresetId, setImageDisplayPresetId] = useState(DEFAULT_IMAGE_DISPLAY_PRESET_ID);
   const [previewZoomLevel, setPreviewZoomLevel] = useState(100);
+  const [previewZoomTouched, setPreviewZoomTouched] = useState(false);
   const [previewBaseSize, setPreviewBaseSize] = useState({
     width: 0,
     height: 0,
@@ -401,12 +403,12 @@ function DocumentImportPage() {
     : undefined;
   const previewZoomStageStyle = previewBaseSize.height > 0
     ? {
-      width: `${100 / previewZoomScale}%`,
+      width: `${PREVIEW_PAGE_WIDTH}px`,
       transform: `scale(${previewZoomScale})`,
     }
     : {
       position: "static",
-      width: "100%",
+      width: `${PREVIEW_PAGE_WIDTH}px`,
       transform: `scale(${previewZoomScale})`,
     };
 
@@ -423,6 +425,7 @@ function DocumentImportPage() {
       setImageQualityLevel(3);
       setImageDisplayPresetId(DEFAULT_IMAGE_DISPLAY_PRESET_ID);
       setPreviewZoomLevel(100);
+      setPreviewZoomTouched(false);
     };
 
     return () => {
@@ -630,7 +633,28 @@ function DocumentImportPage() {
       window.cancelAnimationFrame(frameId);
       cleanupAdaptiveLayout();
     };
-  }, [step, showFullPreview, styleDraftCss, fontRegistry, activePreviewModel, imageDisplayPresetId, previewZoomLevel]);
+  }, [step, showFullPreview, styleDraftCss, fontRegistry, activePreviewModel, imageDisplayPresetId]);
+
+  useEffect(() => {
+    if (step !== "result" || previewZoomTouched || previewBaseSize.width <= 0) {
+      return;
+    }
+
+    const viewportElement = previewViewportRef.current;
+    if (!viewportElement) {
+      return;
+    }
+
+    const availableWidth = Math.max(0, viewportElement.clientWidth - 12);
+    if (availableWidth <= 0 || previewBaseSize.width <= availableWidth) {
+      return;
+    }
+
+    const rawZoom = (availableWidth / previewBaseSize.width) * 100;
+    const steppedZoom = Math.floor(rawZoom / PREVIEW_ZOOM_STEP) * PREVIEW_ZOOM_STEP;
+    const nextZoom = clampPreviewZoom(Math.min(100, Math.max(PREVIEW_ZOOM_MIN, steppedZoom)));
+    setPreviewZoomLevel((current) => (current === nextZoom ? current : nextZoom));
+  }, [step, previewZoomTouched, previewBaseSize.width]);
 
   useEffect(() => {
     const previousFiles = previousSelectedFilesRef.current;
@@ -701,6 +725,7 @@ function DocumentImportPage() {
     resetSaveState();
     setIsExportFileNameDirty(false);
     setPreviewZoomLevel(100);
+    setPreviewZoomTouched(false);
   }
 
   function appendFiles(incomingFiles) {
@@ -759,6 +784,7 @@ function DocumentImportPage() {
     setShowFullPreview(false);
     resetSaveState();
     setPreviewZoomLevel(100);
+    setPreviewZoomTouched(false);
   }
 
   async function startConversion() {
@@ -772,6 +798,7 @@ function DocumentImportPage() {
     setShowStatusDetails(false);
     setShowFullPreview(false);
     setPreviewZoomLevel(100);
+    setPreviewZoomTouched(false);
     resetSaveState();
     setCurrentProgress({
       fileIndex: 0,
@@ -823,6 +850,7 @@ function DocumentImportPage() {
         rootElement,
         fileName: sanitizePdfFileName(exportFileName),
         imageQualityLevel,
+        exportZoomLevel: previewZoomLevel,
         onProgress(progress) {
           setSaveProgress(progress);
         },
@@ -855,10 +883,12 @@ function DocumentImportPage() {
   }
 
   function adjustPreviewZoom(delta) {
+    setPreviewZoomTouched(true);
     setPreviewZoomLevel((current) => clampPreviewZoom(current + delta));
   }
 
   function resetPreviewZoom() {
+    setPreviewZoomTouched(true);
     setPreviewZoomLevel(100);
   }
 
@@ -1436,7 +1466,10 @@ function DocumentImportPage() {
                         max={PREVIEW_ZOOM_MAX}
                         step={PREVIEW_ZOOM_STEP}
                         value={previewZoomLevel}
-                        onChange={(event) => setPreviewZoomLevel(clampPreviewZoom(event.target.value))}
+                        onChange={(event) => {
+                          setPreviewZoomTouched(true);
+                          setPreviewZoomLevel(clampPreviewZoom(event.target.value));
+                        }}
                         aria-label="调整预览缩放"
                       />
                       <button

@@ -2,6 +2,8 @@ const TARGET_SELECTOR = [
   "table",
   "pre",
   ".pptx-slide-shell",
+  ".pptx-slide-frame > .slide-container",
+  ".pptx-slide-frame > .slide",
   ".mn-import-docx-wrapper",
   "section.mn-import-docx",
   "svg",
@@ -45,6 +47,27 @@ function measureHeight(element) {
   );
 }
 
+function measureLayoutWidth(element) {
+  if (!element) {
+    return 0;
+  }
+
+  return Math.max(
+    element.clientWidth || 0,
+    element.getBoundingClientRect().width || 0,
+  );
+}
+
+function measureAvailableWidth(element, parent) {
+  const directWidth = measureLayoutWidth(parent);
+  if (directWidth > 0) {
+    return directWidth;
+  }
+
+  const layoutScope = element.closest(".content-html, .print-block, .merged-preview");
+  return measureLayoutWidth(layoutScope);
+}
+
 export function applyAdaptiveLayout(rootElement, options = {}) {
   if (!rootElement) {
     return () => {};
@@ -68,7 +91,7 @@ export function applyAdaptiveLayout(rootElement, options = {}) {
         return;
       }
 
-      const availableWidth = Math.max(0, parent.clientWidth - 2);
+      const availableWidth = Math.max(0, measureAvailableWidth(element, parent) - 2);
       if (availableWidth <= 0) {
         return;
       }

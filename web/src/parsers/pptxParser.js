@@ -1,6 +1,9 @@
 import { pptxToHtml } from "@jvmr/pptx-to-html";
 import { readAsArrayBuffer, sanitizeHtml, toParserError } from "./utils";
 
+const PPTX_SAFE_SLIDE_WIDTH = 760;
+const PPTX_SAFE_SLIDE_HEIGHT = 428;
+
 function wrapSlideHtml(fileName, slideIndex, slideHtml) {
   return `
     <article class="pptx-slide-shell" data-file-name="${fileName}" data-slide-index="${slideIndex + 1}">
@@ -21,6 +24,8 @@ export async function parsePptxFile(file, context = {}) {
 
     const arrayBuffer = await readAsArrayBuffer(file);
     const slidesHtml = await pptxToHtml(arrayBuffer, {
+      width: PPTX_SAFE_SLIDE_WIDTH,
+      height: PPTX_SAFE_SLIDE_HEIGHT,
       scaleToFit: true,
       letterbox: true,
     });

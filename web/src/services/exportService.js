@@ -32,6 +32,9 @@ const QUALITY_PRESET_MAP = {
   5: { label: "高", scale: 2.0, jpegQuality: 0.92 },
 };
 
+const EXPORT_ZOOM_MIN = 50;
+const EXPORT_ZOOM_MAX = 200;
+
 function createExportError({ command, chunkIndex = null, message, details = null }) {
   return {
     command,
@@ -395,6 +398,31 @@ function createPageFrame() {
   return frame;
 }
 
+function normalizeExportZoomLevel(value) {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue) || numericValue <= 0) {
+    return 100;
+  }
+
+  return Math.max(EXPORT_ZOOM_MIN, Math.min(EXPORT_ZOOM_MAX, Math.round(numericValue)));
+}
+
+function createExportZoomLayer(zoomLevel) {
+  const zoomScale = normalizeExportZoomLevel(zoomLevel) / 100;
+  const layer = document.createElement("div");
+  layer.style.position = "absolute";
+  layer.style.left = "0";
+  layer.style.top = "0";
+  layer.style.width = `${EXPORT_PAGE_WIDTH}px`;
+  layer.style.transform = `scale(${zoomScale})`;
+  layer.style.transformOrigin = "top left";
+  layer.style.background = "#ffffff";
+  return {
+    layer,
+    zoomScale,
+  };
+}
+
 function removeElement(element) {
   if (element && element.parentNode) {
     element.parentNode.removeChild(element);
@@ -431,21 +459,29 @@ async function renderPageCanvas(frame, scale) {
   });
 }
 
-async function generatePdfBytesFromElement(element, imageQualityLevel, onMeasureError, onProgress) {
+async function generatePdfBytesFromElement(
+  element,
+  imageQualityLevel,
+  exportZoomLevel,
+  onMeasureError,
+  onProgress,
+) {
   const exportStartedAt = getNowMs();
-  const cleanupAdaptiveLayout = applyAdaptiveLayout(element, {
-    onMeasureError,
-  });
-
   const renderHost = createExportSandbox();
   const pageFrame = createPageFrame();
   renderHost.appendChild(pageFrame);
   const qualityPreset = getImageQualityPreset(imageQualityLevel);
+  const normalizedExportZoomLevel = normalizeExportZoomLevel(exportZoomLevel);
+  const { layer: exportZoomLayer, zoomScale: exportZoomScale } = createExportZoomLayer(
+    normalizedExportZoomLevel,
+  );
   const createdBlobUrls = [];
+  let cleanupExportAdaptiveLayout = () => {};
 
   try {
     logExportEvent("start", {
       imageQualityLevel,
+      exportZoomLevel: normalizedExportZoomLevel,
       pageWidth: EXPORT_PAGE_WIDTH,
       pageHeight: EXPORT_PAGE_HEIGHT,
     });
@@ -466,6 +502,10 @@ async function generatePdfBytesFromElement(element, imageQualityLevel, onMeasure
     });
 
     renderHost.appendChild(exportContent);
+    cleanupExportAdaptiveLayout = applyAdaptiveLayout(exportContent, {
+      onMeasureError,
+    });
+
     const documentStabilityStartedAt = getNowMs();
     await waitForDocumentStability();
     logExportEvent("document-stability", {
@@ -473,22 +513,28 @@ async function generatePdfBytesFromElement(element, imageQualityLevel, onMeasure
     });
 
     const measureStartedAt = getNowMs();
+    const exportContentHeight = Math.ceil(
+      exportContent.getBoundingClientRect().height || exportContent.scrollHeight || 0,
+    );
     const totalHeight = Math.max(
       EXPORT_PAGE_HEIGHT,
-      Math.ceil(exportContent.getBoundingClientRect().height || exportContent.scrollHeight || 0),
+      Math.ceil(exportContentHeight * exportZoomScale),
     );
     const measureElapsedMs = Math.max(0, Math.round(getNowMs() - measureStartedAt));
 
     renderHost.removeChild(exportContent);
-    pageFrame.appendChild(exportContent);
-    exportContent.style.position = "absolute";
+    exportZoomLayer.appendChild(exportContent);
+    pageFrame.appendChild(exportZoomLayer);
+    exportContent.style.position = "relative";
     exportContent.style.left = "0";
     exportContent.style.top = "0";
 
     const totalPages = Math.max(1, Math.ceil(totalHeight / EXPORT_PAGE_HEIGHT));
     logExportEvent("layout-ready", {
       totalHeight,
+      exportContentHeight,
       totalPages,
+      exportZoomLevel: normalizedExportZoomLevel,
       measureMs: measureElapsedMs,
       setupMs: Math.max(0, Math.round(getNowMs() - exportStartedAt)),
     });
@@ -512,7 +558,7 @@ async function generatePdfBytesFromElement(element, imageQualityLevel, onMeasure
       }
 
       const pageStartedAt = getNowMs();
-      exportContent.style.top = `${-pageIndex * EXPORT_PAGE_HEIGHT}px`;
+      exportZoomLayer.style.top = `${-pageIndex * EXPORT_PAGE_HEIGHT}px`;
       await waitForPaintStability();
 
       const canvas = await renderPageCanvas(pageFrame, qualityPreset.scale);
@@ -546,7 +592,7 @@ async function generatePdfBytesFromElement(element, imageQualityLevel, onMeasure
     return new Uint8Array(pdf.output("arraybuffer"));
   } finally {
     clearTrackedObjectURLs(createdBlobUrls);
-    cleanupAdaptiveLayout();
+    cleanupExportAdaptiveLayout();
     removeElement(renderHost);
   }
 }
@@ -556,6 +602,7 @@ export async function exportMergedPreviewToDocumentPath(options) {
     rootElement,
     fileName,
     imageQualityLevel,
+    exportZoomLevel,
     onProgress,
   } = options;
 
@@ -570,6 +617,7 @@ export async function exportMergedPreviewToDocumentPath(options) {
   const pdfBytes = await generatePdfBytesFromElement(
     rootElement,
     imageQualityLevel,
+    exportZoomLevel,
     (errorInfo) => {
       measureErrors.push(errorInfo);
     },
@@ -594,6 +642,7 @@ export async function exportMergedPreviewToDocumentPath(options) {
         fileName: sanitizePdfFileName(fileName),
         mimeType: "application/pdf",
         imageQualityLevel,
+        exportZoomLevel: normalizeExportZoomLevel(exportZoomLevel),
       };
     },
     onProgress(progress) {
