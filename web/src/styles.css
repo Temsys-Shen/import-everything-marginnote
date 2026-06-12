@@ -1497,6 +1497,12 @@ ol {
   margin: 0.35em 0 0;
 }
 
+.content-html li input[type="checkbox"] {
+  margin: 0 0.4em 0 0;
+  accent-color: var(--accent);
+  pointer-events: none;
+}
+
 .content-html code,
 .content-html pre,
 .content-html kbd,

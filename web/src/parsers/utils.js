@@ -2,6 +2,7 @@ import DOMPurify from "dompurify";
 
 function buildSanitizeConfig(options = {}) {
   const allowClass = options.allowClass === true;
+  const { mode, ...dompurifyOptions } = options;
   const richHtmlConfig = {
     USE_PROFILES: { html: true, svg: true, svgFilters: true },
     ADD_ATTR: ["style", "class"],
@@ -9,14 +10,15 @@ function buildSanitizeConfig(options = {}) {
     ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel|data):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i,
   };
 
-  if (options.mode === "presentation") {
-    return richHtmlConfig;
+  if (mode === "presentation") {
+    return { ...richHtmlConfig, ...dompurifyOptions };
   }
 
-  if (options.mode === "rich-document") {
+  if (mode === "rich-document") {
     return {
       ...richHtmlConfig,
       ADD_TAGS: ["style"],
+      ...dompurifyOptions,
     };
   }
 
@@ -28,7 +30,7 @@ function buildSanitizeConfig(options = {}) {
     config.ADD_ATTR = ["class"];
   }
 
-  return config;
+  return { ...config, ...dompurifyOptions };
 }
 
 export function sanitizeHtml(html, options = {}) {
