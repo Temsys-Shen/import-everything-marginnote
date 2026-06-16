@@ -222,6 +222,7 @@ export function buildImportProgressModel(progress, fileName, isActive) {
     actionLabel: phaseMeta.label,
     fileName,
     message: normalized.message || phaseMeta.label,
+    indeterminate: normalized.indeterminate === true,
   };
 }
 

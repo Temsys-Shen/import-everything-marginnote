@@ -698,6 +698,16 @@ ol {
   transition: width 160ms ease;
 }
 
+.progress-fill.indeterminate {
+  width: 25% !important;
+  animation: progress-indeterminate 1.5s ease-in-out infinite;
+}
+
+@keyframes progress-indeterminate {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}
+
 .progress-meta {
   display: grid;
   gap: 4px;
@@ -1415,7 +1425,7 @@ ol {
   line-height: 1.4;
 }
 
-.content-html {
+.content-html:not(.themed-content-html) {
   line-height: 1.6;
   font-size: 13px;
   overflow-wrap: anywhere;
@@ -1423,16 +1433,16 @@ ol {
   min-width: 0;
 }
 
-.content-html img,
-.content-html svg {
+.content-html:not(.themed-content-html) img,
+.content-html:not(.themed-content-html) svg {
   display: block;
   max-width: 100%;
   height: auto;
   box-sizing: border-box;
 }
 
-.content-html p > img:only-child,
-.content-html p > svg:only-child {
+.content-html:not(.themed-content-html) p > img:only-child,
+.content-html:not(.themed-content-html) p > svg:only-child {
   margin-inline: auto;
 }
 
@@ -1456,81 +1466,81 @@ ol {
   max-width: min(100%, 360px);
 }
 
-.content-html h1,
-.content-html h2,
-.content-html h3,
-.content-html h4,
-.content-html h5,
-.content-html h6 {
+.content-html:not(.themed-content-html) h1,
+.content-html:not(.themed-content-html) h2,
+.content-html:not(.themed-content-html) h3,
+.content-html:not(.themed-content-html) h4,
+.content-html:not(.themed-content-html) h5,
+.content-html:not(.themed-content-html) h6 {
   margin: 0.67em 0;
   line-height: 1.35;
 }
 
-.content-html p,
-.content-html ul,
-.content-html ol,
-.content-html dl,
-.content-html blockquote,
-.content-html figure {
+.content-html:not(.themed-content-html) p,
+.content-html:not(.themed-content-html) ul,
+.content-html:not(.themed-content-html) ol,
+.content-html:not(.themed-content-html) dl,
+.content-html:not(.themed-content-html) blockquote,
+.content-html:not(.themed-content-html) figure {
   margin: 1em 0;
 }
 
-.content-html ul,
-.content-html ol {
+.content-html:not(.themed-content-html) ul,
+.content-html:not(.themed-content-html) ol {
   padding-left: 1.5em;
 }
 
-.content-html ul {
+.content-html:not(.themed-content-html) ul {
   list-style: disc;
 }
 
-.content-html ol {
+.content-html:not(.themed-content-html) ol {
   list-style: decimal;
 }
 
-.content-html li {
+.content-html:not(.themed-content-html) li {
   display: list-item;
 }
 
-.content-html li > ul,
-.content-html li > ol {
+.content-html:not(.themed-content-html) li > ul,
+.content-html:not(.themed-content-html) li > ol {
   margin: 0.35em 0 0;
 }
 
-.content-html li input[type="checkbox"] {
+.content-html:not(.themed-content-html) li input[type="checkbox"] {
   margin: 0 0.4em 0 0;
   accent-color: var(--accent);
   pointer-events: none;
 }
 
-.content-html code,
-.content-html pre,
-.content-html kbd,
-.content-html samp {
+.content-html:not(.themed-content-html) code,
+.content-html:not(.themed-content-html) pre,
+.content-html:not(.themed-content-html) kbd,
+.content-html:not(.themed-content-html) samp {
   font-family: var(--preview-mono-font-stack, "SF Mono", "Menlo", "Consolas", monospace);
   font-variant-ligatures: none;
   letter-spacing: 0;
   word-spacing: 0;
 }
 
-.content-html table {
+.content-html:not(.themed-content-html) table {
   width: 100%;
   border-collapse: collapse;
 }
 
-.content-html table,
-.content-html th,
-.content-html td {
+.content-html:not(.themed-content-html) table,
+.content-html:not(.themed-content-html) th,
+.content-html:not(.themed-content-html) td {
   border: 1px solid #c6d1c7;
 }
 
-.content-html th,
-.content-html td {
+.content-html:not(.themed-content-html) th,
+.content-html:not(.themed-content-html) td {
   padding: 6px;
   vertical-align: top;
 }
 
-.content-html pre {
+.content-html:not(.themed-content-html) pre {
   overflow: auto;
   border-radius: 10px;
   background: #15221a;
@@ -1544,9 +1554,9 @@ ol {
   tab-size: 2;
 }
 
-.content-html pre code,
-.content-html .hljs,
-.content-html .plain-text-block {
+.content-html:not(.themed-content-html) pre code,
+.content-html:not(.themed-content-html) .hljs,
+.content-html:not(.themed-content-html) .plain-text-block {
   display: block;
   white-space: inherit;
   word-break: inherit;
@@ -1554,57 +1564,57 @@ ol {
   text-align: inherit;
 }
 
-.content-html .hljs {
+.content-html:not(.themed-content-html) .hljs {
   background: transparent;
   color: #f3f6f2;
 }
 
-.content-html .hljs-comment,
-.content-html .hljs-quote,
-.content-html .hljs-doctag {
+.content-html:not(.themed-content-html) .hljs-comment,
+.content-html:not(.themed-content-html) .hljs-quote,
+.content-html:not(.themed-content-html) .hljs-doctag {
   color: #8ea19a;
 }
 
-.content-html .hljs-keyword,
-.content-html .hljs-selector-tag,
-.content-html .hljs-meta .hljs-keyword {
+.content-html:not(.themed-content-html) .hljs-keyword,
+.content-html:not(.themed-content-html) .hljs-selector-tag,
+.content-html:not(.themed-content-html) .hljs-meta .hljs-keyword {
   color: #7dd3b0;
 }
 
-.content-html .hljs-string,
-.content-html .hljs-regexp,
-.content-html .hljs-addition,
-.content-html .hljs-attribute,
-.content-html .hljs-template-tag {
+.content-html:not(.themed-content-html) .hljs-string,
+.content-html:not(.themed-content-html) .hljs-regexp,
+.content-html:not(.themed-content-html) .hljs-addition,
+.content-html:not(.themed-content-html) .hljs-attribute,
+.content-html:not(.themed-content-html) .hljs-template-tag {
   color: #f4d38b;
 }
 
-.content-html .hljs-number,
-.content-html .hljs-literal {
+.content-html:not(.themed-content-html) .hljs-number,
+.content-html:not(.themed-content-html) .hljs-literal {
   color: #f2a97d;
 }
 
-.content-html .hljs-title,
-.content-html .hljs-title.class_,
-.content-html .hljs-title.function_,
-.content-html .hljs-section {
+.content-html:not(.themed-content-html) .hljs-title,
+.content-html:not(.themed-content-html) .hljs-title.class_,
+.content-html:not(.themed-content-html) .hljs-title.function_,
+.content-html:not(.themed-content-html) .hljs-section {
   color: #8cb7ff;
 }
 
-.content-html .hljs-attr,
-.content-html .hljs-selector-attr,
-.content-html .hljs-selector-class,
-.content-html .hljs-selector-id,
-.content-html .hljs-tag,
-.content-html .hljs-name {
+.content-html:not(.themed-content-html) .hljs-attr,
+.content-html:not(.themed-content-html) .hljs-selector-attr,
+.content-html:not(.themed-content-html) .hljs-selector-class,
+.content-html:not(.themed-content-html) .hljs-selector-id,
+.content-html:not(.themed-content-html) .hljs-tag,
+.content-html:not(.themed-content-html) .hljs-name {
   color: #b7e08a;
 }
 
-.content-html .hljs-variable,
-.content-html .hljs-template-variable,
-.content-html .hljs-symbol,
-.content-html .hljs-bullet,
-.content-html .hljs-subst {
+.content-html:not(.themed-content-html) .hljs-variable,
+.content-html:not(.themed-content-html) .hljs-template-variable,
+.content-html:not(.themed-content-html) .hljs-symbol,
+.content-html:not(.themed-content-html) .hljs-bullet,
+.content-html:not(.themed-content-html) .hljs-subst {
   color: #f1b2d0;
 }
 

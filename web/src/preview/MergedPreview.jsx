@@ -11,7 +11,7 @@ function renderContentSection(section) {
     >
       <h4>{section.title}</h4>
       <div
-        className="content-html"
+        className="content-html themed-content-html"
         dangerouslySetInnerHTML={{ __html: section.html }}
       />
     </section>

@@ -14,11 +14,17 @@ function nextMindmapSheetId(prefix = "mindmap-sheet") {
 }
 
 export function createMindmapImportNode(input = {}) {
+  const rawImage = input.image;
+  const image = rawImage && typeof rawImage === "object" && typeof rawImage.data === "string" && typeof rawImage.mimeType === "string"
+    ? { mimeType: rawImage.mimeType, data: rawImage.data }
+    : null;
+
   return {
     id: String(input.id || nextMindmapNodeId()),
     text: String(input.text || "").trim(),
     children: Array.isArray(input.children) ? input.children : [],
     comment: typeof input.comment === "string" ? input.comment.trim() : "",
+    image,
     style: input.style && typeof input.style === "object" ? input.style : {},
     sourceMeta: input.sourceMeta && typeof input.sourceMeta === "object" ? input.sourceMeta : {},
   };

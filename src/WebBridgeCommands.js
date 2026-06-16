@@ -1,5 +1,7 @@
 var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
   const EXPORT_DIR_NAME = "ImportEverythingExports";
+  const CAPTURE_SESSION_PREFIX = "capture_";
+  const htmlCaptureSessions = {};
 
   function toBridgePayload(value) {
     return value === undefined ? null : value;
@@ -416,17 +418,26 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
       : [];
     const comment = typeof rawNode.comment === "string" ? rawNode.comment.trim() : "";
     const style = normalizeImportedNodeStyle(rawNode.style);
+    const image = rawNode.image && typeof rawNode.image === "object" && typeof rawNode.image.data === "string" && typeof rawNode.image.mimeType === "string"
+      ? { mimeType: rawNode.image.mimeType, data: rawNode.image.data }
+      : null;
 
     return {
       text,
       comment,
       style,
+      image,
       children,
     };
   }
 
   function buildImportedMarkdownComment(node) {
     const sections = [];
+
+    if (node.image && node.image.data && node.image.mimeType) {
+      sections.push(`![image](data:${node.image.mimeType};base64,${node.image.data})`);
+    }
+
     if (node.comment) {
       sections.push(node.comment);
     }
@@ -547,6 +558,14 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
     const markdownComment = buildImportedMarkdownComment(node);
     if (markdownComment) {
       note.appendMarkdownComment(markdownComment);
+    }
+
+    if (node.image) {
+      try {
+        note.processMarkdownBase64Images();
+      } catch (error) {
+        console.log(`[ImportEverything] processMarkdownBase64Images failed: ${String(error)}`);
+      }
     }
 
     return note;
@@ -884,6 +903,253 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
     });
   }
 
+  function captureHtmlAsPdf(context, payload) {
+    const html = String(payload && payload.html || "");
+    if (!html) {
+      return responseFail("CAPTURE_HTML_EMPTY", "HTML is required");
+    }
+
+    const parentView = context.controller.view;
+    const panelWebView = context.controller.webView;
+    const pageWidth = Number(payload.pageWidth || 794);
+    const pageHeight = Number(payload.pageHeight || 1123);
+    const sessionId = `${CAPTURE_SESSION_PREFIX}${Date.now()}_${Math.floor(Math.random() * 1000000)}`;
+
+    const tempWebView = new UIWebView({
+      x: -5000, y: 0,
+      width: pageWidth,
+      height: pageHeight,
+    });
+    tempWebView.backgroundColor = UIColor.whiteColor();
+    tempWebView.scalesPageToFit = false;
+    tempWebView.hidden = false;
+    parentView.addSubview(tempWebView);
+
+    function bridgeProgress(msg) {
+      try {
+        panelWebView.evaluateJavaScript(
+          "window.__bridgeProgress && __bridgeProgress(" + JSON.stringify(msg) + ")",
+          null
+        );
+      } catch (e) {}
+    }
+
+    return new Promise(function (resolve) {
+      var done = false;
+
+      var timeoutTimer = NSTimer.scheduledTimerWithTimeInterval(120, false, function () {
+        if (done) return;
+        done = true;
+        if (tempWebView.superview) tempWebView.removeFromSuperview();
+        resolve(responseFail("CAPTURE_TIMEOUT", "Snapshot timed out after 120s"));
+      });
+
+      function finish(errorMsg, result) {
+        if (done) return;
+        done = true;
+        timeoutTimer.invalidate();
+        if (errorMsg && tempWebView.superview) tempWebView.removeFromSuperview();
+        if (errorMsg) {
+          resolve(responseFail("CAPTURE_FAILED", errorMsg));
+        } else {
+          resolve(result);
+        }
+      }
+
+      function prepareCaptureSession(totalHeight) {
+        const pageCount = Math.max(1, Math.ceil(totalHeight / pageHeight));
+        htmlCaptureSessions[sessionId] = {
+          webView: tempWebView,
+          pageWidth: pageWidth,
+          pageHeight: pageHeight,
+          totalHeight: totalHeight,
+          pageCount: pageCount,
+        };
+        finish(null, responseOk("CAPTURE_READY", "Snapshot session ready", {
+          sessionId: sessionId,
+          width: pageWidth,
+          height: totalHeight,
+          pageWidth: pageWidth,
+          pageHeight: pageHeight,
+          pageCount: pageCount,
+        }));
+      }
+
+      function checkImagesAndSnap() {
+        if (done) return;
+        tempWebView.evaluateJavaScript(
+          "(function(){var imgs=document.images;var total=imgs.length;var loaded=0;for(var i=0;i<total;i++){if(imgs[i].complete)loaded++;}return JSON.stringify({ready:loaded===total,total:total,loaded:loaded});})()",
+          function (raw) {
+            if (done) return;
+            try {
+              var info = JSON.parse(raw);
+              console.log("[ImportEverything] image check: " + info.loaded + "/" + info.total + " ready=" + info.ready);
+              if (!info.ready && info.total > 0) {
+                bridgeProgress("正在加载图片 " + info.loaded + "/" + info.total);
+                NSTimer.scheduledTimerWithTimeInterval(0.3, false, checkImagesAndSnap);
+                return;
+              }
+            } catch (e) {
+              console.log("[ImportEverything] image check error: " + String(e));
+            }
+
+            bridgeProgress("正在调整页面布局");
+            tempWebView.evaluateJavaScript(
+              "Math.max(document.body.scrollHeight||0,document.documentElement.scrollHeight||0)||0",
+              function (hResult) {
+                if (done) return;
+                var sh = Number(hResult) || 0;
+                console.log("[ImportEverything] scrollHeight=" + sh);
+                const totalHeight = Math.max(pageHeight, Math.ceil(sh + 40));
+                tempWebView.frame = { x: -5000, y: 0, width: pageWidth, height: pageHeight };
+                NSTimer.scheduledTimerWithTimeInterval(0.15, false, function () {
+                  if (done) return;
+                  prepareCaptureSession(totalHeight);
+                });
+              }
+            );
+          }
+        );
+      }
+
+      function pollLoad() {
+        NSTimer.scheduledTimerWithTimeInterval(0.3, true, function (t) {
+          if (done) { t.invalidate(); return; }
+          try {
+            if (tempWebView.loading) return;
+          } catch (e) { return; }
+          t.invalidate();
+          bridgeProgress("正在加载图片");
+          NSTimer.scheduledTimerWithTimeInterval(0.3, false, checkImagesAndSnap);
+        });
+      }
+
+      tempWebView.loadHTMLStringBaseURL(html, NSURL.URLWithString("about:blank"));
+      NSTimer.scheduledTimerWithTimeInterval(0.5, false, pollLoad);
+    });
+  }
+
+  function captureHtmlPdfPage(context, payload) {
+    const sessionId = String(payload && payload.sessionId || "");
+    const pageIndex = Number(payload && payload.pageIndex);
+    const jpegQuality = Math.max(0.1, Math.min(1, Number(payload && payload.jpegQuality || 0.85)));
+    const session = htmlCaptureSessions[sessionId];
+
+    if (!session) {
+      return responseFail("CAPTURE_SESSION_NOT_FOUND", "Capture session not found: " + sessionId);
+    }
+    if (!Number.isFinite(pageIndex) || pageIndex < 0 || pageIndex >= session.pageCount) {
+      return responseFail("CAPTURE_PAGE_INDEX_INVALID", "Invalid capture page index: " + pageIndex);
+    }
+
+    return new Promise(function (resolve) {
+      const offsetY = Math.floor(pageIndex * session.pageHeight);
+      const webView = session.webView;
+
+      webView.evaluateJavaScript(
+        "window.scrollTo(0," + offsetY + ");document.documentElement.scrollTop=" + offsetY + ";document.body.scrollTop=" + offsetY,
+        function () {
+          NSTimer.scheduledTimerWithTimeInterval(0.08, false, function () {
+            webView.takeSnapshotWithWidth(session.pageWidth, function (image) {
+              if (!image) {
+                resolve(responseFail("CAPTURE_PAGE_EMPTY", "takeSnapshot returned null at page " + pageIndex));
+                return;
+              }
+
+              const w = image.size ? image.size.width : 0;
+              const h = image.size ? image.size.height : 0;
+              console.log("[ImportEverything] snapshot page " + (pageIndex + 1) + "/" + session.pageCount + " size: " + w + "x" + h);
+
+              if (w <= 0 || h <= 0) {
+                resolve(responseFail("CAPTURE_PAGE_ZERO_DIMENSION", "Snapshot has zero dimension at page " + pageIndex));
+                return;
+              }
+
+              let nsData = image.jpegData(jpegQuality);
+              if (!nsData || nsData.length() === 0) {
+                nsData = image.pngData();
+              }
+              if (!nsData || nsData.length() === 0) {
+                resolve(responseFail("CAPTURE_PAGE_ENCODE_EMPTY", "jpegData and pngData both returned empty at page " + pageIndex));
+                return;
+              }
+
+              resolve(responseOk("CAPTURE_PAGE_OK", "Snapshot page captured", {
+                data: nsData.base64Encoding(),
+                width: w,
+                height: h,
+                offsetY: offsetY,
+                pageIndex: pageIndex,
+                pageCount: session.pageCount,
+              }));
+            });
+          });
+        }
+      );
+    });
+  }
+
+  function finishCaptureHtmlAsPdf(context, payload) {
+    const sessionId = String(payload && payload.sessionId || "");
+    const session = htmlCaptureSessions[sessionId];
+
+    if (!session) {
+      return responseFail("CAPTURE_SESSION_NOT_FOUND", "Capture session not found: " + sessionId);
+    }
+
+    if (session.webView && session.webView.superview) {
+      session.webView.removeFromSuperview();
+    }
+    delete htmlCaptureSessions[sessionId];
+
+    return responseOk("CAPTURE_FINISH_OK", "Snapshot session finished", {
+      sessionId: sessionId,
+    });
+  }
+
+  function fetchImageForExport(context, payload) {
+    const url = String(payload && payload.url || "").trim();
+    if (!url) {
+      return responseFail("FETCH_IMAGE_INVALID_URL", "URL is required");
+    }
+
+    const request = NSMutableURLRequest.requestWithURL(NSURL.URLWithString(url));
+    request.setTimeoutInterval(15);
+
+    return new Promise(function (resolve) {
+      NSURLConnection.sendAsynchronousRequestQueueCompletionHandler(
+        request,
+        NSOperationQueue.mainQueue(),
+        function (response, data, error) {
+          if (error) {
+            resolve(responseFail("FETCH_IMAGE_ERROR", String(error.localizedDescription)));
+            return;
+          }
+          if (!data || data.length() === 0) {
+            resolve(responseFail("FETCH_IMAGE_EMPTY", "No data received"));
+            return;
+          }
+
+          const httpResponse = response;
+          const statusCode = httpResponse ? httpResponse.statusCode() : 0;
+          if (statusCode !== 200) {
+            resolve(responseFail("FETCH_IMAGE_STATUS", "HTTP " + statusCode));
+            return;
+          }
+
+          const base64Data = data.base64Encoding();
+          const headers = httpResponse ? httpResponse.allHeaderFields() : null;
+          const mimeType = (headers && headers["Content-Type"]) || "image/png";
+
+          resolve(responseOk("FETCH_IMAGE_OK", "Image fetched", {
+            data: base64Data,
+            mimeType: mimeType,
+          }));
+        }
+      );
+    });
+  }
+
   const commands = {
     ping: wrapCommand("ping", ping),
     echo: wrapCommand("echo", echo),
@@ -908,6 +1174,10 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
     savePdfChunk: wrapCommand("savePdfChunk", savePdfChunk),
     savePdfFinalize: wrapCommand("savePdfFinalize", savePdfFinalize),
     savePdfAbort: wrapCommand("savePdfAbort", savePdfAbort),
+    fetchImageForExport: fetchImageForExport,
+    captureHtmlAsPdf: captureHtmlAsPdf,
+    captureHtmlPdfPage: captureHtmlPdfPage,
+    finishCaptureHtmlAsPdf: wrapCommand("finishCaptureHtmlAsPdf", finishCaptureHtmlAsPdf),
   };
 
   return {

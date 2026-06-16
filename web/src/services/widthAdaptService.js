@@ -7,7 +7,6 @@ const TARGET_SELECTOR = [
   ".mn-import-docx-wrapper",
   "section.mn-import-docx",
   "svg",
-  "img",
 ].join(", ");
 
 function restoreScaledNodes(rootElement) {

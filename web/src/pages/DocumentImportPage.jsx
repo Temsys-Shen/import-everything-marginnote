@@ -19,6 +19,9 @@ import {
   exportMergedPreviewToDocumentPath,
   getImageQualityPreset,
 } from "../services/exportService";
+import { jsPDF } from "jspdf";
+import { transferBinaryToBridge } from "../services/binaryTransferService";
+import MNBridge from "../lib/mnBridge";
 import ProgressPopup from "../components/ProgressPopup";
 import {
   buildConversionProgressModel,
@@ -46,7 +49,6 @@ import {
   revokeAllObjectURLs,
   revokeObjectURLsForFiles,
 } from "../parsers/objectUrlRegistry";
-
 function statusLabel(status) {
   if (status === ParseStatus.PENDING) return "待处理";
   if (status === ParseStatus.PROCESSING) return "处理中";
@@ -135,6 +137,13 @@ const PREVIEW_ZOOM_MIN = 50;
 const PREVIEW_ZOOM_MAX = 200;
 const PREVIEW_ZOOM_STEP = 10;
 const PREVIEW_PAGE_WIDTH = 794;
+const IMPORT_QUALITY_JPEG_MAP = {
+  1: 0.58,
+  2: 0.68,
+  3: 0.78,
+  4: 0.86,
+  5: 0.92,
+};
 
 function clampPreviewZoom(value) {
   const normalized = Number(value);
@@ -143,6 +152,30 @@ function clampPreviewZoom(value) {
   }
 
   return Math.max(PREVIEW_ZOOM_MIN, Math.min(PREVIEW_ZOOM_MAX, Math.round(normalized)));
+}
+
+function getImportJpegQuality(level) {
+  return IMPORT_QUALITY_JPEG_MAP[level] || IMPORT_QUALITY_JPEG_MAP[3];
+}
+
+function buildImportSnapshotHtml(cssText, rootHtml, zoomLevel) {
+  const normalizedZoom = clampPreviewZoom(zoomLevel);
+  const zoomScale = normalizedZoom / 100;
+  const bodyHtml = zoomScale === 1
+    ? rootHtml
+    : [
+      `<div style="width:${PREVIEW_PAGE_WIDTH}px;zoom:${zoomScale};background:#ffffff;">`,
+      rootHtml,
+      "</div>",
+    ].join("");
+
+  return [
+    "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><style>",
+    cssText,
+    "</style></head><body>",
+    bodyHtml,
+    "</body></html>",
+  ].join("");
 }
 
 function FileQueue({
@@ -669,7 +702,15 @@ function DocumentImportPage() {
   }, [selectedFiles]);
 
   useEffect(() => {
-    return () => {
+    const handler = function (msg) {
+      setSaveProgress(function (prev) {
+        if (!prev) return prev;
+        return { ...prev, message: String(msg) };
+      });
+    };
+    window.__bridgeProgress = handler;
+    return function () {
+      delete window.__bridgeProgress;
       revokeAllObjectURLs();
     };
   }, []);
@@ -826,6 +867,15 @@ function DocumentImportPage() {
     }
   }
 
+  function waitForImages(container) {
+    const imgs = Array.from(container.querySelectorAll("img"));
+    if (imgs.length === 0) return;
+    return Promise.all(imgs.map(img => {
+      if (img.complete && img.naturalWidth > 0) return;
+      return new Promise(resolve => { img.onload = img.onerror = resolve; });
+    }));
+  }
+
   async function saveToDocumentPath() {
     if (!canImportToMN) {
       return;
@@ -836,34 +886,103 @@ function DocumentImportPage() {
     setIsSaving(true);
     setSaveError(null);
     setLastSavedInfo(null);
-    setSaveProgress({
-      phase: "render",
-      message: "正在生成PDF",
-      current: 0,
-      total: 1,
-      ratioHint: 0.08,
-    });
-
+    let exportRoot = null;
     try {
-      const rootElement = document.getElementById("export-print-root");
-      const result = await exportMergedPreviewToDocumentPath({
-        rootElement,
+      exportRoot = document.createElement("div");
+      exportRoot.className = "merged-preview themed-document";
+      exportRoot.dataset.exportThemeRoot = "true";
+      exportRoot.dataset.exportStyleId = activeStyleId || "default";
+      const presetId = String(imageDisplayPresetId || "fit-width").replace(/[^a-z0-9-]/g, "");
+      exportRoot.dataset.imagePresetId = presetId;
+      exportRoot.style.width = "794px";
+      exportRoot.style.background = "#ffffff";
+      previewModel.contentSections.forEach((section) => {
+        const sectionEl = document.createElement("section");
+        sectionEl.className = "print-block content-section";
+        const h4 = document.createElement("h4");
+        h4.textContent = section.title;
+        sectionEl.appendChild(h4);
+        const div = document.createElement("div");
+        div.className = "content-html themed-content-html";
+        div.innerHTML = section.html;
+        sectionEl.appendChild(div);
+        exportRoot.appendChild(sectionEl);
+      });
+      document.body.appendChild(exportRoot);
+      await waitForImages(exportRoot);
+
+      const cssLines = [
+        "body{margin:0;background:#fff;font-family:-apple-system,'PingFang SC',sans-serif;font-size:13px;line-height:1.6;color:#182018}",
+        ".content-html img{max-width:100%;height:auto;display:block}",
+        ".content-html p,.content-html ul,.content-html ol{margin:1em 0}",
+        ".content-html ul,.content-html ol{padding-left:1.5em}",
+        ".content-section h4{margin-bottom:8px;font-size:15px;line-height:1.4}",
+      ];
+      if (typeof themeCssText === "string") cssLines.push(themeCssText);
+
+      const PAGE_W = 794, PAGE_H = 1123;
+      const pdf = new jsPDF({ orientation: "p", unit: "px", format: [PAGE_W, PAGE_H], compress: true });
+      let firstPage = true;
+      let captureSessionId = null;
+
+      setSaveProgress({ phase: "snapshot", message: "正在生成PDF", current: 0, total: 1, ratioHint: 0.5, indeterminate: true });
+
+      try {
+        const snapshotHtml = buildImportSnapshotHtml(
+          cssLines.join(""),
+          exportRoot.outerHTML,
+          previewZoomLevel,
+        );
+        const snapResult = await MNBridge.send("captureHtmlAsPdf", {
+          html: snapshotHtml,
+          pageWidth: 794,
+          pageHeight: PAGE_H,
+        });
+        if (!snapResult || !snapResult.ok || !snapResult.data || !snapResult.data.sessionId || !snapResult.data.pageCount) {
+          throw new Error(snapResult ? snapResult.message : "captureHtmlAsPdf failed");
+        }
+
+        captureSessionId = snapResult.data.sessionId;
+        const capturedPageCount = Number(snapResult.data.pageCount);
+        for (let pi = 0; pi < capturedPageCount; pi++) {
+          setSaveProgress(function (p) { return { ...p, message: "正在截取页面 " + (pi + 1) + "/" + capturedPageCount }; });
+          const pageResult = await MNBridge.send("captureHtmlPdfPage", {
+            sessionId: captureSessionId,
+            pageIndex: pi,
+            jpegQuality: getImportJpegQuality(imageQualityLevel),
+          });
+          if (!pageResult || !pageResult.ok || !pageResult.data || !pageResult.data.data || !pageResult.data.width || !pageResult.data.height) {
+            throw new Error(pageResult ? pageResult.message : "captureHtmlPdfPage failed at index " + pi);
+          }
+
+          if (firstPage) { firstPage = false; } else { pdf.addPage([PAGE_W, PAGE_H], "p"); }
+          pdf.addImage("data:image/jpeg;base64," + pageResult.data.data, "JPEG", 0, 0, PAGE_W, PAGE_H, undefined, "FAST");
+          if (capturedPageCount > 1) {
+            setSaveProgress(function (p) { return { ...p, message: "正在排版PDF " + (pi + 1) + "/" + capturedPageCount }; });
+          }
+        }
+      } finally {
+        if (captureSessionId) {
+          await MNBridge.send("finishCaptureHtmlAsPdf", {
+            sessionId: captureSessionId,
+          });
+        }
+      }
+
+      setSaveProgress(function (p) { return { ...p, message: "正在传送到MarginNote" }; });
+      const pdfBytes = new Uint8Array(pdf.output("arraybuffer"));
+      const result = await transferBinaryToBridge({
+        bytes: pdfBytes,
         fileName: sanitizePdfFileName(exportFileName),
-        imageQualityLevel,
-        exportZoomLevel: previewZoomLevel,
-        onProgress(progress) {
-          setSaveProgress(progress);
+        mimeType: "application/pdf",
+        commands: { init: "savePdfInit", chunk: "savePdfChunk", finalize: "savePdfFinalize", abort: "savePdfAbort" },
+        buildFinalizePayload: function (a) {
+          return { sessionId: a.sessionId, totalChunks: a.totalChunks, expectedByteLength: a.expectedByteLength };
         },
       });
 
-      setSaveProgress({
-        phase: "done",
-        message: "导入完成",
-        current: 1,
-        total: 1,
-        ratioHint: 1,
-      });
-      setLastSavedInfo(result.data || null);
+      setSaveProgress({ phase: "done", message: "导入完成", current: 1, total: 1, ratioHint: 1, indeterminate: false });
+      setLastSavedInfo(result ? result.data : null);
       await notifyImportResult(null);
       navigate("/", { replace: true });
     } catch (error) {
@@ -878,6 +997,9 @@ function DocumentImportPage() {
       setSaveError(nextSaveError);
       await notifyImportResult(nextSaveError);
     } finally {
+      if (exportRoot && exportRoot.parentNode) {
+        exportRoot.parentNode.removeChild(exportRoot);
+      }
       setIsSaving(false);
     }
   }
@@ -1599,18 +1721,6 @@ function DocumentImportPage() {
         ) : null}
       </footer>
 
-      {previewModel.printableSections.length > 0 ? (
-        <div className="export-render-host" aria-hidden="true">
-          <MergedPreview
-            model={previewModel}
-            variant="export"
-            rootId="export-print-root"
-            styleId={activeStyleId || "default"}
-            imagePresetId={imageDisplayPresetId}
-          />
-        </div>
-      ) : null}
-
       {step === "converting" && conversionProgress ? (
         <ProgressPopup
           title="正在转换文档"
@@ -1624,10 +1734,10 @@ function DocumentImportPage() {
       {isSaving && saveProgressModel ? (
         <ProgressPopup
           title="正在导入到MN文档"
-          description={saveProgressModel.message}
           percent={displaySavePercent}
           fileName={saveProgressModel.fileName}
-          actionLabel={saveProgressModel.actionLabel}
+          message={saveProgressModel.message}
+          indeterminate={saveProgressModel.indeterminate === true}
         />
       ) : null}
 

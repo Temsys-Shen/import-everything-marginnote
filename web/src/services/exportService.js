@@ -3,6 +3,7 @@ import { jsPDF } from "jspdf";
 import { transferBinaryToBridge } from "./binaryTransferService";
 import { sanitizePdfFileName } from "./exportConfigService";
 import { applyAdaptiveLayout } from "./widthAdaptService";
+import MNBridge from "../lib/mnBridge";
 
 const BRIDGE_COMMANDS = {
   INIT: "savePdfInit",
@@ -311,6 +312,28 @@ async function optimizeExportImages(sourceElement, cloneElement, options = {}) {
       report.largestSourceSide = Math.max(report.largestSourceSide, sourceWidth, sourceHeight);
 
       if (/^https?:\/\//i.test(sourceSrc)) {
+        if (readiness.status === "ready") {
+          try {
+            const bridgeResponse = await MNBridge.send("fetchImageForExport", { url: sourceSrc });
+            if (bridgeResponse && bridgeResponse.ok && bridgeResponse.data && bridgeResponse.data.data) {
+              const base64Data = bridgeResponse.data.data;
+              const mimeType = bridgeResponse.data.mimeType || "image/png";
+              const binaryStr = atob(base64Data);
+              const bytes = new Uint8Array(binaryStr.length);
+              for (let i = 0; i < binaryStr.length; i++) {
+                bytes[i] = binaryStr.charCodeAt(i);
+              }
+              const blob = new Blob([bytes], { type: mimeType });
+              const blobUrl = URL.createObjectURL(blob);
+              createdBlobUrls.push(blobUrl);
+              cloneImage.src = blobUrl;
+              report.downsampledImages += 1;
+            }
+          } catch (error) {
+            console.log("[ImportEverything] optimizeExportImages bridge error:", error);
+            report.skippedUnsafeImages += 1;
+          }
+        }
         continue;
       }
 
@@ -562,6 +585,7 @@ async function generatePdfBytesFromElement(
       await waitForPaintStability();
 
       const canvas = await renderPageCanvas(pageFrame, qualityPreset.scale);
+      console.log(`[ImportEverything] html2canvas: ${canvas.width}x${canvas.height}, src size=${canvas.toDataURL("image/png").length}`);
       const imageData = canvas.toDataURL("image/jpeg", qualityPreset.jpegQuality);
 
       if (pageIndex > 0) {
@@ -580,6 +604,7 @@ async function generatePdfBytesFromElement(
       });
     }
 
+    console.log(`[ImportEverything] export report: ${JSON.stringify(prepared.report)}`);
     logExportEvent("finish", {
       totalPages,
       totalImages: prepared.report.totalImages,

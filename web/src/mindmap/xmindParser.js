@@ -1,5 +1,6 @@
 import JSZip from "jszip";
 import { createMindmapImportNode, createMindmapImportSheet, createMindmapImportTree } from "./model";
+import { extractXmindImage } from "./imageUtils";
 import {
   findZipEntryByBaseName,
   getDirectChildElementsByName,
@@ -472,7 +473,21 @@ function parseLegacyXmindDocument(document, fileName, contentEntry, entryNames) 
   });
 }
 
-function parseModernXmindData(parsed, fileName, contentEntry, entryNames) {
+async function attachXmindImagesToNode(node, topicsById, zip) {
+  const topicId = node.sourceMeta && node.sourceMeta.xmindTopicId;
+  if (topicId) {
+    const topic = topicsById[topicId];
+    if (topic) {
+      const imageInfo = await extractXmindImage(topic, zip);
+      if (imageInfo) node.image = imageInfo;
+    }
+  }
+  for (const child of node.children || []) {
+    await attachXmindImagesToNode(child, topicsById, zip);
+  }
+}
+
+async function parseModernXmindData(parsed, fileName, contentEntry, entryNames, zip) {
   const sheets = extractSheetsFromUnknown(parsed);
   if (sheets.length === 0) {
     throw new Error("content.json中未识别到有效sheet");
@@ -499,6 +514,10 @@ function parseModernXmindData(parsed, fileName, contentEntry, entryNames) {
       },
     });
   });
+
+  for (const sheet of importSheets) {
+    await attachXmindImagesToNode(sheet.root, topicsById, zip);
+  }
 
   return createMindmapImportTree({
     sourceType: "xmind",
@@ -533,7 +552,7 @@ export async function parseXmindMindmapFile(file) {
       throw new Error(`content.json解析失败: ${error && error.message ? error.message : String(error)}`);
     }
 
-    return parseModernXmindData(parsed, file.name, contentJsonKey, entryNames);
+    return await parseModernXmindData(parsed, file.name, contentJsonKey, entryNames, zip);
   }
 
   const contentXmlKey = findZipEntryByBaseName(entryNames, "content.xml");

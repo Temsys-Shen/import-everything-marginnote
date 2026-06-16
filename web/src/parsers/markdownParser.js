@@ -1,5 +1,6 @@
 import { renderMarkdownToHtml } from "./markdownEngine";
 import { stripMarkdownFrontMatter } from "./markdownFrontMatter";
+import { normalizeBulletIndentation } from "./normalizeBulletIndentation";
 import { readAsText, toParserError } from "./utils";
 
 function splitIntoSections(markdown, fileName) {
@@ -57,8 +58,9 @@ export async function parseMarkdownFile(file) {
   try {
     const markdown = await readAsText(file);
     const normalized = stripMarkdownFrontMatter(markdown);
+    const content = normalizeBulletIndentation(normalized.content);
     return {
-      sections: splitIntoSections(normalized.content, file.name),
+      sections: splitIntoSections(content, file.name),
     };
   } catch (error) {
     throw toParserError({
