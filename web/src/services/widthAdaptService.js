@@ -9,6 +9,17 @@ const TARGET_SELECTOR = [
   "svg",
 ].join(", ");
 
+const SKIP_TARGET_SELECTOR = [
+  ".katex",
+  ".katex-display",
+  ".katex-html",
+  ".katex-mathml",
+].join(", ");
+
+function shouldSkipTarget(element) {
+  return Boolean(element && element.closest(SKIP_TARGET_SELECTOR));
+}
+
 function restoreScaledNodes(rootElement) {
   rootElement.querySelectorAll("[data-export-scale-wrapper='true']").forEach((wrapper) => {
     const target = wrapper.firstElementChild;
@@ -82,6 +93,10 @@ export function applyAdaptiveLayout(rootElement, options = {}) {
   targets.forEach((element) => {
     try {
       if (element.closest("[data-export-scale-wrapper='true']")) {
+        return;
+      }
+
+      if (shouldSkipTarget(element)) {
         return;
       }
 

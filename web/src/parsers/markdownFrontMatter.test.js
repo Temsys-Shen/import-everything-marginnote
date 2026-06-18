@@ -182,6 +182,12 @@ describe("parseMarkdownFile", () => {
 });
 
 describe("renderMarkdownToHtml with math blocks", () => {
+  it("keeps default katex html and mathml output for preview rendering", () => {
+    const html = renderMarkdownToHtml("Inline $E=mc^2$ math.");
+    expect(html).toContain("katex-html");
+    expect(html).toContain("katex-mathml");
+  });
+
   it("renders $$ block math with closing $$ on same line as content", () => {
     const html = renderMarkdownToHtml([
       "Before",
@@ -226,4 +232,3 @@ describe("renderMarkdownToHtml with math blocks", () => {
     expect(html).toContain("katex");
   });
 });
-

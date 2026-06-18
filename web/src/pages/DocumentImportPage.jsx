@@ -18,6 +18,7 @@ import {
 import {
   exportMergedPreviewToDocumentPath,
   getImageQualityPreset,
+  prepareKaTeXForExport,
 } from "../services/exportService";
 import { jsPDF } from "jspdf";
 import { transferBinaryToBridge } from "../services/binaryTransferService";
@@ -909,6 +910,7 @@ function DocumentImportPage() {
         exportRoot.appendChild(sectionEl);
       });
       document.body.appendChild(exportRoot);
+      prepareKaTeXForExport(exportRoot);
       await waitForImages(exportRoot);
 
       const cssLines = [

@@ -452,6 +452,26 @@ function removeElement(element) {
   }
 }
 
+export function prepareKaTeXForExport(rootElement) {
+  if (!rootElement) {
+    return;
+  }
+
+  rootElement.querySelectorAll(".katex .katex-mathml").forEach((element) => {
+    element.style.position = "static";
+    element.style.width = "auto";
+    element.style.height = "auto";
+    element.style.overflow = "visible";
+    element.style.padding = "0";
+    element.style.clipPath = "none";
+    element.style.webkitClipPath = "none";
+  });
+
+  rootElement.querySelectorAll(".katex .katex-html").forEach((element) => {
+    removeElement(element);
+  });
+}
+
 async function prepareExportContent(sourceElement, options = {}) {
   const content = sourceElement.cloneNode(true);
   content.style.width = `${EXPORT_PAGE_WIDTH}px`;
@@ -461,6 +481,7 @@ async function prepareExportContent(sourceElement, options = {}) {
   content.style.position = "relative";
   content.style.left = "0";
   content.style.top = "0";
+  prepareKaTeXForExport(content);
 
   return optimizeExportImages(sourceElement, content, options);
 }

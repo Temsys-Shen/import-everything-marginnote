@@ -1150,6 +1150,148 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
     });
   }
 
+  function isBridgeNil(obj) {
+    return obj === null || typeof obj === "undefined" || obj instanceof NSNull;
+  }
+
+  function bilibiliApiProxy(context, payload) {
+    if (!payload || typeof payload !== "object") {
+      return responseFail("BILI_API_INVALID_PAYLOAD", "payload must be an object");
+    }
+    const url = String(payload.url || "").trim();
+    if (!url) {
+      return responseFail("BILI_API_INVALID_URL", "URL is required");
+    }
+
+    var nsUrl = NSURL.URLWithString(url);
+    var request = NSMutableURLRequest.requestWithURL(nsUrl);
+    request.setTimeoutInterval(20);
+    request.setValueForHTTPHeaderField("https://www.bilibili.com", "Referer");
+    request.setValueForHTTPHeaderField("Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X)", "User-Agent");
+
+    return new Promise(function (resolve) {
+      NSURLConnection.sendAsynchronousRequestQueueCompletionHandler(
+        request,
+        NSOperationQueue.mainQueue(),
+        function (response, data, error) {
+          if (!isBridgeNil(error)) {
+            var errMsg = "";
+            try {
+              if (!isBridgeNil(error.localizedDescription)) errMsg = String(error.localizedDescription);
+              else if (!isBridgeNil(error.code)) errMsg = "code " + String(error.code);
+              var domain = "";
+              var code = "";
+              if (!isBridgeNil(error.domain)) domain = String(error.domain);
+              if (!isBridgeNil(error.code)) code = String(error.code);
+              errMsg = errMsg + " (" + domain + " " + code + ")";
+            } catch (e2) {}
+            resolve(responseFail("BILI_API_ERROR", errMsg));
+            return;
+          }
+          if (isBridgeNil(data) || data.length() === 0) {
+            resolve(responseFail("BILI_API_EMPTY", "No data received"));
+            return;
+          }
+
+          var httpResponse = response;
+          var statusCode = httpResponse ? httpResponse.statusCode() : 0;
+
+          // Send body as base64 to avoid JS string escaping issues
+          var bodyB64 = data.base64Encoding();
+
+          resolve(responseOk("BILI_API_OK", "API fetched", {
+            statusCode: statusCode,
+            bodyB64: bodyB64,
+          }));
+        }
+      );
+    });
+  }
+
+  function importBilibiliVideos(context, payload) {
+    validatePayloadObject(payload, "importBilibiliVideos");
+    const videos = payload.videos;
+    if (!Array.isArray(videos) || videos.length === 0) {
+      return responseFail("BILI_IMPORT_NO_VIDEOS", "videos array is required");
+    }
+
+    const biliDir = exportDirectoryPath() + "/BilibiliVideos";
+    ensureDirectory(biliDir);
+    const fm = fileManager();
+
+    var imported = 0;
+    var errors = [];
+    var lastDocMd5 = "";
+
+    for (var i = 0; i < videos.length; i++) {
+      var video = videos[i];
+      var bvid = String(video.bvid || "").trim();
+      var title = String(video.title || bvid).trim();
+      var duration = video.duration ? String(video.duration) : "";
+      var thumbnail = video.thumbnail ? String(video.thumbnail) : "";
+
+      if (!bvid) {
+        errors.push({ bvid: bvid, title: title, error: "Missing bvid" });
+        continue;
+      }
+
+      var mnvlinkPath = biliDir + "/Bilibili_" + bvid + ".mnvlink";
+
+      if (fm.fileExistsAtPath(mnvlinkPath)) {
+        imported++;
+        continue;
+      }
+
+      try {
+        var mnvlinkContent = JSON.stringify({
+          url: "https://player.bilibili.com/player.html?bvid=" + bvid + "&page=1&danmaku=0",
+          duration: duration,
+          thumbnail: thumbnail,
+        });
+
+        var nsStr = NSString.stringWithString(mnvlinkContent);
+        var nsData = nsStr.dataUsingEncoding(4);
+        if (!nsData) {
+          errors.push({ bvid: bvid, title: title, error: "Failed to encode .mnvlink content" });
+          continue;
+        }
+        var writeOk = nsData.writeToFileAtomically(mnvlinkPath, true);
+        if (!writeOk) {
+          errors.push({ bvid: bvid, title: title, error: "Failed to write .mnvlink file" });
+          continue;
+        }
+
+        var docMd5 = appInstance().importDocument(mnvlinkPath);
+        if (docMd5) {
+          imported++;
+          lastDocMd5 = String(docMd5);
+        } else {
+          errors.push({ bvid: bvid, title: title, error: "importDocument returned empty" });
+        }
+      } catch (e) {
+        errors.push({ bvid: bvid, title: title, error: String(e) });
+      }
+    }
+
+    if (lastDocMd5) {
+      try {
+        var studyController = studyControllerForContext(context);
+        var notebookId = String(studyController.notebookController ? studyController.notebookController.notebookId : "");
+        if (notebookId) {
+          studyController.openNotebookAndDocument(notebookId, lastDocMd5);
+        }
+      } catch (e) {
+        console.log("[ImportEverything] Failed to open last doc: " + String(e));
+      }
+    }
+
+    return responseOk("BILI_IMPORT_OK", "Bilibili import complete", {
+      imported: imported,
+      total: videos.length,
+      errors: errors,
+    });
+  }
+
   const commands = {
     ping: wrapCommand("ping", ping),
     echo: wrapCommand("echo", echo),
@@ -1174,6 +1316,8 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
     savePdfChunk: wrapCommand("savePdfChunk", savePdfChunk),
     savePdfFinalize: wrapCommand("savePdfFinalize", savePdfFinalize),
     savePdfAbort: wrapCommand("savePdfAbort", savePdfAbort),
+    bilibiliApiProxy: bilibiliApiProxy,
+    importBilibiliVideos: wrapCommand("importBilibiliVideos", importBilibiliVideos),
     fetchImageForExport: fetchImageForExport,
     captureHtmlAsPdf: captureHtmlAsPdf,
     captureHtmlPdfPage: captureHtmlPdfPage,

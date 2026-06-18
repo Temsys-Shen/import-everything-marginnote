@@ -66,4 +66,37 @@ describe("applyAdaptiveLayout", () => {
 
     document.body.removeChild(root);
   });
+
+  it("does not scale internal KaTeX svg nodes", () => {
+    const root = document.createElement("div");
+    root.innerHTML = `
+      <div class="content-html">
+        <span class="katex">
+          <span class="katex-html">
+            <svg></svg>
+          </span>
+        </span>
+      </div>
+    `;
+    document.body.appendChild(root);
+
+    const content = root.querySelector(".content-html");
+    const svg = root.querySelector("svg");
+
+    defineLayoutMetric(content, "clientWidth", 200);
+    defineLayoutMetric(svg, "scrollWidth", 500);
+    defineLayoutMetric(svg, "scrollHeight", 60);
+    defineRect(svg, 500, 60);
+
+    const cleanup = applyAdaptiveLayout(root);
+
+    expect(root.querySelector("[data-export-scale-wrapper='true']")).toBeNull();
+    expect(svg.style.transform).toBe("");
+    expect(svg.style.width).toBe("");
+    expect(svg.parentElement.className).toBe("katex-html");
+
+    cleanup();
+
+    document.body.removeChild(root);
+  });
 });
