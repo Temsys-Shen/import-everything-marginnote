@@ -13,6 +13,7 @@ import {
   BILI_INPUT_HINT,
 } from "../services/bilibiliApiService";
 import { importVideos } from "../services/bilibiliImportService";
+import { completeImportWithNotice } from "../services/exportConfigService";
 
 function fmtDuration(sec) {
   sec = Math.round(Number(sec) || 0);
@@ -42,6 +43,19 @@ function VideoRow({ video, checked, onToggle }) {
   );
 }
 
+function buildImportSuccessMessage(result) {
+  const imported = Number(result && result.imported ? result.imported : 0);
+  const total = Number(result && result.total ? result.total : 0);
+  const errors = Array.isArray(result && result.errors) ? result.errors.length : 0;
+  if (errors > 0) {
+    return `B站视频导入完成，成功${imported}个，失败${errors}个`;
+  }
+  if (total > 0) {
+    return `B站视频导入完成，共导入${imported}个视频`;
+  }
+  return "B站视频导入完成";
+}
+
 export default function BilibiliImportPage() {
   const navigate = useNavigate();
 
@@ -64,11 +78,6 @@ export default function BilibiliImportPage() {
   const [error, setError] = useState("");
   const [importProgress, setImportProgress] = useState(null);
   const [importResult, setImportResult] = useState(null);
-  const [debugLog, setDebugLog] = useState([]);
-
-  const log = useCallback((msg) => {
-    setDebugLog(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
-  }, []);
 
   const go = useCallback((s) => { setStep(s); setError(""); }, []);
 
@@ -90,7 +99,6 @@ export default function BilibiliImportPage() {
 
   function handleParse() {
     const p = parseInput(input);
-    log(`parseInput → type="${p.type}" value="${p.value}"`);
     setInputType(p.type);
     setParsedValue(p.value);
 
@@ -117,14 +125,11 @@ export default function BilibiliImportPage() {
   async function loadSingleVideo(input) {
     setLoading(true);
     setError("");
-    log("loadSingleVideo: calling fetchVideoInfo");
     try {
       const data = await fetchVideoInfo(input);
-      log("fetchVideoInfo ok");
       setSingleVideo(data);
       go("preview");
     } catch (e) {
-      log("fetchVideoInfo error: " + (e?.message || JSON.stringify(e)));
       setError(e?.message || String(e));
     } finally {
       setLoading(false);
@@ -134,10 +139,8 @@ export default function BilibiliImportPage() {
   async function loadUserBrowse(mid) {
     setLoading(true);
     setError("");
-    log("loadUserBrowse: calling fetchUserCollections");
     try {
       const data = await fetchUserCollections(mid);
-      log("fetchUserCollections ok");
       setUserInfo({ mid });
       setSeasons(data?.items_lists?.seasons_list || []);
       setSeries(data?.items_lists?.series_list || []);
@@ -145,18 +148,15 @@ export default function BilibiliImportPage() {
 
       let favs = [];
       try {
-        log("loadUserBrowse: calling fetchFavoriteFolders");
         const favData = await fetchFavoriteFolders(mid);
-        log("fetchFavoriteFolders ok, count=" + (favData?.list?.length || 0));
         favs = favData?.list || [];
-      } catch (e) {
-        log("fetchFavoriteFolders ignored: " + (e?.message || String(e)));
+      } catch {
+        // Favorite folders are optional on the user browse screen.
       }
       setFavorites(favs);
 
       go("browse");
     } catch (e) {
-      log("loadUserBrowse error: " + (e?.message || JSON.stringify(e)));
       setError(e?.message || String(e));
     } finally {
       setLoading(false);
@@ -166,17 +166,14 @@ export default function BilibiliImportPage() {
   async function loadCollectionVideos(season) {
     setLoading(true);
     setError("");
-    log("loadCollectionVideos: season_id=" + season.season_id);
     try {
       setContainerInfo({ type: "seasons", label: season.name, id: season.season_id });
       const data = await fetchCollectionVideos(season.season_id, season.mid);
       const list = data?.archives || [];
-      log("loadCollectionVideos ok, count=" + list.length);
       setVideos(list);
       setSelectedBvids(new Set(list.map((v) => v.bvid)));
       go("videolist");
     } catch (e) {
-      log("loadCollectionVideos error: " + (e?.message || JSON.stringify(e)));
       setError(e?.message || String(e));
     } finally {
       setLoading(false);
@@ -186,17 +183,14 @@ export default function BilibiliImportPage() {
   async function loadSeriesVideos(item) {
     setLoading(true);
     setError("");
-    log("loadSeriesVideos: series_id=" + item.series_id);
     try {
       setContainerInfo({ type: "series", label: item.name || item.title, id: item.series_id });
       const data = await fetchSeriesVideos(item.series_id, item.mid);
       const list = data?.archives || [];
-      log("loadSeriesVideos ok, count=" + list.length);
       setVideos(list);
       setSelectedBvids(new Set(list.map((v) => v.bvid)));
       go("videolist");
     } catch (e) {
-      log("loadSeriesVideos error: " + (e?.message || JSON.stringify(e)));
       setError(e?.message || String(e));
     } finally {
       setLoading(false);
@@ -206,21 +200,16 @@ export default function BilibiliImportPage() {
   async function loadFavoriteVideos(mediaId) {
     setLoading(true);
     setError("");
-    log("loadFavoriteVideos: media_id=" + mediaId);
     try {
       let label = "收藏夹";
       try {
-        log("loadFavoriteVideos: calling fetchFavoriteFolderInfo");
         const info = await fetchFavoriteFolderInfo(mediaId);
-        log("fetchFavoriteFolderInfo ok, title=" + (info?.title || "none"));
         if (info?.title) label = info.title;
-      } catch (e) {
-        log("fetchFavoriteFolderInfo ignored: " + (e?.message || String(e)));
+      } catch {
+        // Folder title is optional; the video list request below is authoritative.
       }
       setContainerInfo({ type: "favorite", label, id: mediaId });
-      log("loadFavoriteVideos: calling fetchFavoriteFolderVideos");
       const data = await fetchFavoriteFolderVideos(mediaId);
-      log("fetchFavoriteFolderVideos ok");
       const list = (data?.medias || []).map((m) => ({
         aid: m.id,
         bvid: m.bvid,
@@ -229,12 +218,10 @@ export default function BilibiliImportPage() {
         duration: m.duration,
         owner: m.upper ? { name: m.upper.name, mid: m.upper.mid } : null,
       }));
-      log("videos parsed, count=" + list.length);
       setVideos(list);
       setSelectedBvids(new Set(list.map((v) => v.bvid)));
       go("videolist");
     } catch (e) {
-      log("loadFavoriteVideos error: " + (e?.message || JSON.stringify(e)));
       setError(e?.message || String(e));
     } finally {
       setLoading(false);
@@ -270,7 +257,12 @@ export default function BilibiliImportPage() {
     try {
       const result = await importVideos(videos);
       setImportResult(result);
-      go("result");
+      try {
+        await completeImportWithNotice(buildImportSuccessMessage(result));
+      } catch (noticeError) {
+        setError(noticeError && noticeError.message ? `导入已完成，但收起面板或弹窗提示失败: ${noticeError.message}` : `导入已完成，但收起面板或弹窗提示失败: ${String(noticeError)}`);
+        go("result");
+      }
     } catch (e) {
       setError(e.message);
       go("result");
@@ -305,12 +297,6 @@ export default function BilibiliImportPage() {
               {loading ? "解析中…" : "解析"}
             </button>
           </div>
-          {debugLog.length > 0 && (
-            <div className="debug-log">
-              <p className="field-hint" style={{marginBottom:4}}>调试日志:</p>
-              {debugLog.map((msg, i) => <p key={i} className="debug-line">{msg}</p>)}
-            </div>
-          )}
         </div>
       </div>
     );

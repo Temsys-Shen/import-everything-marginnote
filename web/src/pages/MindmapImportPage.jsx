@@ -6,7 +6,7 @@ import MindmapCanvasPreview from "../mindmap/MindmapCanvasPreview";
 import { buildMindmapImportPreview } from "../mindmap/model";
 import { detectMindmapSourceType, parseMindmapFileBySourceType } from "../mindmap/sourceTypes";
 import { buildMindmapImportProgressModel } from "../progress/progressModel";
-import { showAlertMessage } from "../services/exportConfigService";
+import { completeImportWithNotice } from "../services/exportConfigService";
 import {
   getMindmapImportContext,
   getMindmapImportProgress,
@@ -336,8 +336,15 @@ function MindmapImportPage() {
               error: "",
               message: successMessage,
             });
-            await showAlertMessage(successMessage);
-            navigate("/", { replace: true });
+            try {
+              await completeImportWithNotice(successMessage);
+            } catch (error) {
+              setImportState({
+                loading: false,
+                error: error && error.message ? `导入已完成，但收起面板或弹窗提示失败: ${error.message}` : `导入已完成，但收起面板或弹窗提示失败: ${String(error)}`,
+                message: successMessage,
+              });
+            }
             return;
           }
 

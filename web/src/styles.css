@@ -2126,23 +2126,6 @@ ol {
   color: var(--muted);
 }
 
-.debug-log {
-  margin-top: 8px;
-  border: 1px solid #e8c8c8;
-  border-radius: 8px;
-  background: #fef5f5;
-  padding: 8px;
-  max-height: 200px;
-  overflow: auto;
-}
-.debug-line {
-  font-size: 11px;
-  line-height: 1.55;
-  color: #8a3c3c;
-  word-break: break-all;
-  font-family: "SF Mono", Menlo, monospace;
-}
-
 @media print {
   body {
     background: #ffffff;

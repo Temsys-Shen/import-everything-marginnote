@@ -13,6 +13,8 @@ const COMMANDS = {
   SAVE_FONT_ABORT: "saveFontAbort",
   DELETE_FONT: "deleteFontFile",
   SHOW_ALERT: "showAlertMessage",
+  CLOSE_PANEL: "closePanel",
+  CLOSE_PANEL_AND_SHOW_ALERT: "closePanelAndShowAlert",
 };
 
 function ensureBridgeOk(response, commandName) {
@@ -151,4 +153,16 @@ export async function showAlertMessage(message) {
     message,
   });
   return ensureBridgeOk(response, COMMANDS.SHOW_ALERT);
+}
+
+export async function closePanel() {
+  const response = await MNBridge.send(COMMANDS.CLOSE_PANEL, {});
+  return ensureBridgeOk(response, COMMANDS.CLOSE_PANEL);
+}
+
+export async function completeImportWithNotice(message) {
+  const response = await MNBridge.send(COMMANDS.CLOSE_PANEL_AND_SHOW_ALERT, {
+    message,
+  });
+  return ensureBridgeOk(response, COMMANDS.CLOSE_PANEL_AND_SHOW_ALERT);
 }

@@ -38,6 +38,7 @@ import {
   readStylePreset,
   sanitizePdfFileName,
   saveStylePreset,
+  completeImportWithNotice,
   showAlertMessage,
   uploadFontAsset,
 } from "../services/exportConfigService";
@@ -126,7 +127,11 @@ async function notifyImportResult(saveError) {
   const message = buildImportAlertMessage(saveError);
 
   try {
-    await showAlertMessage(message);
+    if (saveError) {
+      await showAlertMessage(message);
+    } else {
+      await completeImportWithNotice(message);
+    }
   } catch (error) {
     console.log(`[ImportEverything] show import alert failed: ${String(error)}`);
   }

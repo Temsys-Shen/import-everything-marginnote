@@ -1,6 +1,7 @@
 var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
   const EXPORT_DIR_NAME = "ImportEverythingExports";
   const CAPTURE_SESSION_PREFIX = "capture_";
+  const BILIBILI_IMPORT_DOCUMENT_DELAY_SECONDS = 0.25;
   const htmlCaptureSessions = {};
 
   function toBridgePayload(value) {
@@ -916,6 +917,21 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
     });
   }
 
+  function closePanelAndShowAlert(context, payload) {
+    validatePayloadObject(payload, "closePanelAndShowAlert");
+    const message = String(payload.message || "").trim();
+    if (!message) {
+      throw new Error("message is required");
+    }
+
+    context.closePanel(context.controller);
+    appInstance().alert(message);
+    return responseOk("CLOSE_PANEL_AND_SHOW_ALERT_OK", "Panel closed and alert shown", {
+      closed: true,
+      message: message,
+    });
+  }
+
   function captureHtmlAsPdf(context, payload) {
     const html = String(payload && payload.html || "");
     if (!html) {
@@ -1235,6 +1251,7 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
     var imported = 0;
     var errors = [];
     var lastDocMd5 = "";
+    var importQueue = [];
 
     for (var i = 0; i < videos.length; i++) {
       var video = videos[i];
@@ -1252,7 +1269,7 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
       var mnvlinkPath = biliDir + "/" + mnvlinkFileName;
 
       if (fm.fileExistsAtPath(mnvlinkPath)) {
-        imported++;
+        importQueue.push({ bvid: bvid, title: title, path: mnvlinkPath });
         continue;
       }
 
@@ -1274,34 +1291,63 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
           continue;
         }
 
-        var docMd5 = appInstance().importDocument(mnvlinkPath);
-        if (docMd5) {
-          imported++;
-          lastDocMd5 = String(docMd5);
-        } else {
-          errors.push({ bvid: bvid, title: title, error: "importDocument returned empty" });
-        }
+        importQueue.push({ bvid: bvid, title: title, path: mnvlinkPath });
       } catch (e) {
         errors.push({ bvid: bvid, title: title, error: String(e) });
       }
     }
 
-    if (lastDocMd5) {
-      try {
-        var studyController = studyControllerForContext(context);
-        var notebookId = String(studyController.notebookController ? studyController.notebookController.notebookId : "");
-        if (notebookId) {
-          studyController.openNotebookAndDocument(notebookId, lastDocMd5);
+    return new Promise(function (resolve) {
+      function finishImport() {
+        if (lastDocMd5) {
+          try {
+            var studyController = studyControllerForContext(context);
+            var notebookId = String(studyController.notebookController ? studyController.notebookController.notebookId : "");
+            if (notebookId) {
+              studyController.openNotebookAndDocument(notebookId, lastDocMd5);
+            }
+          } catch (e) {
+            console.log("[ImportEverything] Failed to open last doc: " + String(e));
+          }
         }
-      } catch (e) {
-        console.log("[ImportEverything] Failed to open last doc: " + String(e));
-      }
-    }
 
-    return responseOk("BILI_IMPORT_OK", "Bilibili import complete", {
-      imported: imported,
-      total: videos.length,
-      errors: errors,
+        resolve(responseOk("BILI_IMPORT_OK", "Bilibili import complete", {
+          imported: imported,
+          total: videos.length,
+          errors: errors,
+        }));
+      }
+
+      function importNext(index) {
+        if (index >= importQueue.length) {
+          finishImport();
+          return;
+        }
+
+        var item = importQueue[index];
+        try {
+          var docMd5 = appInstance().importDocument(item.path);
+          if (docMd5) {
+            imported++;
+            lastDocMd5 = String(docMd5);
+          } else {
+            errors.push({ bvid: item.bvid, title: item.title, error: "importDocument returned empty" });
+          }
+        } catch (e) {
+          errors.push({ bvid: item.bvid, title: item.title, error: String(e) });
+        }
+
+        if (index + 1 >= importQueue.length) {
+          finishImport();
+          return;
+        }
+
+        NSTimer.scheduledTimerWithTimeInterval(BILIBILI_IMPORT_DOCUMENT_DELAY_SECONDS, false, function () {
+          importNext(index + 1);
+        });
+      }
+
+      importNext(0);
     });
   }
 
@@ -1309,6 +1355,7 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
     ping: wrapCommand("ping", ping),
     echo: wrapCommand("echo", echo),
     closePanel: wrapCommand("closePanel", closePanel),
+    closePanelAndShowAlert: wrapCommand("closePanelAndShowAlert", closePanelAndShowAlert),
     loadExportConfig: wrapCommand("loadExportConfig", loadExportConfig),
     readStyleFile: wrapCommand("readStyleFile", readStyleFile),
     saveStyleFile: wrapCommand("saveStyleFile", saveStyleFile),
@@ -1330,7 +1377,7 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
     savePdfFinalize: wrapCommand("savePdfFinalize", savePdfFinalize),
     savePdfAbort: wrapCommand("savePdfAbort", savePdfAbort),
     bilibiliApiProxy: bilibiliApiProxy,
-    importBilibiliVideos: wrapCommand("importBilibiliVideos", importBilibiliVideos),
+    importBilibiliVideos: importBilibiliVideos,
     fetchImageForExport: fetchImageForExport,
     captureHtmlAsPdf: captureHtmlAsPdf,
     captureHtmlPdfPage: captureHtmlPdfPage,
