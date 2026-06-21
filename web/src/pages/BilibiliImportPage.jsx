@@ -72,6 +72,22 @@ export default function BilibiliImportPage() {
 
   const go = useCallback((s) => { setStep(s); setError(""); }, []);
 
+  function handleTopbarBack() {
+    if (step === "input") {
+      navigate("/");
+      return;
+    }
+    if (step === "videolist") {
+      go(userInfo ? "browse" : "input");
+      return;
+    }
+    if (step === "importing") {
+      go("videolist");
+      return;
+    }
+    go("input");
+  }
+
   function handleParse() {
     const p = parseInput(input);
     log(`parseInput → type="${p.type}" value="${p.value}"`);
@@ -89,6 +105,10 @@ export default function BilibiliImportPage() {
       loadSingleVideo(p.value);
     } else if (p.type === "mid") {
       loadUserBrowse(p.value);
+    } else if (p.type === "season") {
+      loadCollectionVideos({ season_id: p.value, mid: p.mid, name: "B站合集" });
+    } else if (p.type === "series") {
+      loadSeriesVideos({ series_id: p.value, mid: p.mid, name: "B站系列" });
     } else if (p.type === "favorite") {
       loadFavoriteVideos(p.value);
     }
@@ -277,9 +297,6 @@ export default function BilibiliImportPage() {
           />
           {error && <p className="error-text">{error}</p>}
           <div className="card-actions">
-            <button className="button button-secondary button-small" onClick={() => navigate("/")}>
-              返回
-            </button>
             <button
               className="button button-primary button-grow"
               onClick={handleParse}
@@ -323,9 +340,6 @@ export default function BilibiliImportPage() {
           </div>
           {error && <p className="error-text">{error}</p>}
           <div className="card-actions">
-            <button className="button button-secondary button-small" onClick={() => go("input")}>
-              返回
-            </button>
             <button
               className="button button-primary button-grow"
               onClick={() => handleImport([v])}
@@ -403,11 +417,6 @@ export default function BilibiliImportPage() {
           </div>
 
           {error && <p className="error-text">{error}</p>}
-          <div className="card-actions">
-            <button className="button button-secondary button-small" onClick={() => go("input")}>
-              返回
-            </button>
-          </div>
         </div>
       </div>
     );
@@ -452,9 +461,6 @@ export default function BilibiliImportPage() {
 
           {error && <p className="error-text">{error}</p>}
           <div className="card-actions">
-            <button className="button button-secondary button-small" onClick={() => go("browse")}>
-              返回
-            </button>
             <button
               className="button button-primary button-grow"
               disabled={selectedCount === 0 || loading}
@@ -563,7 +569,7 @@ export default function BilibiliImportPage() {
 
   return (
     <div className="app-shell">
-      <PageTopbar title={pageTitle} />
+      <PageTopbar label={pageTitle} onBack={handleTopbarBack} />
       {step === "input" && renderInput()}
       {step === "preview" && renderPreview()}
       {step === "browse" && renderBrowse()}

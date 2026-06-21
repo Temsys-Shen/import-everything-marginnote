@@ -84,6 +84,19 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
     return `${sanitized}.pdf`;
   }
 
+  function normalizeMnvlinkFileName(title, bvid) {
+    const safeTitle = String(title || "").trim().replace(/[\\/:*?"<>|]/g, "_");
+    const safeBvid = String(bvid || "").trim().replace(/[\\/:*?"<>|]/g, "_");
+    const baseName = safeTitle || safeBvid;
+    if (!baseName) {
+      throw new Error("Mnvlink filename requires title or bvid");
+    }
+    if (safeTitle && safeBvid) {
+      return `${safeTitle}_${safeBvid}.mnvlink`;
+    }
+    return `${baseName}.mnvlink`;
+  }
+
   function uniqueTargetPath(targetDir, fileName) {
     const normalized = normalizePdfFileName(fileName);
     const extIndex = normalized.lastIndexOf(".");
@@ -1235,7 +1248,8 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
         continue;
       }
 
-      var mnvlinkPath = biliDir + "/Bilibili_" + bvid + ".mnvlink";
+      var mnvlinkFileName = normalizeMnvlinkFileName(title, bvid);
+      var mnvlinkPath = biliDir + "/" + mnvlinkFileName;
 
       if (fm.fileExistsAtPath(mnvlinkPath)) {
         imported++;
@@ -1249,8 +1263,7 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
           thumbnail: thumbnail,
         });
 
-        var nsStr = NSString.stringWithString(mnvlinkContent);
-        var nsData = nsStr.dataUsingEncoding(4);
+        var nsData = NSData.dataWithStringEncoding(mnvlinkContent, 4);
         if (!nsData) {
           errors.push({ bvid: bvid, title: title, error: "Failed to encode .mnvlink content" });
           continue;

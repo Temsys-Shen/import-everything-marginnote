@@ -11,13 +11,14 @@ async function apiGet(endpoint, params = {}) {
 
   const res = await MNBridge.send("bilibiliApiProxy", { url });
   if (!res || !res.ok) {
-    throw new Error(res?.message || "B站 API 请求失败");
+    const code = res?.code ? ` ${res.code}` : "";
+    throw new Error(`B站API请求失败${code}: ${res?.message || "未知错误"} (${endpoint})`);
   }
   if (res.data.statusCode !== 200 && res.data.statusCode !== 0) {
-    throw new Error(`B站 API 返回状态码 ${res.data.statusCode}`);
+    throw new Error(`B站API返回状态码${res.data.statusCode}: ${endpoint}`);
   }
   if (!res.data.bodyB64) {
-    throw new Error("B站 API 返回空响应");
+    throw new Error(`B站API返回空响应: ${endpoint}`);
   }
 
   let body;
@@ -34,10 +35,10 @@ async function apiGet(endpoint, params = {}) {
   try {
     parsed = JSON.parse(body);
   } catch {
-    throw new Error("B站 API 响应解析失败");
+    throw new Error(`B站API响应解析失败: ${endpoint}`);
   }
   if (parsed.code !== 0) {
-    throw new Error(parsed.message || `B站 API 错误 code=${parsed.code}`);
+    throw new Error(`B站API错误 code=${parsed.code}: ${parsed.message || "未知错误"} (${endpoint})`);
   }
   return parsed.data;
 }
@@ -132,7 +133,7 @@ export function parseInput(input) {
   // space.bilibili.com URL patterns
   //   /{mid}              → user space
   //   /{mid}/favlist?fid= → favorite folder
-  //   /{mid}/lists/{id}   → collection/series (show user browse)
+  //   /{mid}/lists/{id}   → collection/series
   if (host.endsWith("space.bilibili.com")) {
     const parts = path.split("/").filter(Boolean);
     const mid = parts[0];
@@ -144,7 +145,18 @@ export function parseInput(input) {
       if (fid && /^\d{1,20}$/.test(fid)) return { type: "favorite", value: fid };
       return { type: "mid", value: mid };
     }
-    // /{mid}/lists/{id} → just show user browse for now
+    // /{mid}/lists/{id}?type=season
+    if (action === "lists") {
+      const listId = parts[2];
+      const listType = (params.get("type") || "season").toLowerCase();
+      if (listId && /^\d{1,20}$/.test(listId)) {
+        if (listType === "series") {
+          return { type: "series", value: listId, mid };
+        }
+        return { type: "season", value: listId, mid };
+      }
+      return { type: "mid", value: mid };
+    }
     return { type: "mid", value: mid };
   }
 
