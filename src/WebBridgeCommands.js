@@ -1271,6 +1271,7 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
       try {
         if (!fm.fileExistsAtPath(mnvlinkPath)) {
           var mnvlinkContent = JSON.stringify({
+            title: title,
             url: "https://player.bilibili.com/player.html?bvid=" + bvid + "&page=1&danmaku=0",
             duration: duration,
             thumbnail: thumbnail,

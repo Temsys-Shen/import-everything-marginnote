@@ -22,7 +22,13 @@ function fmtDuration(sec) {
   return m > 0 ? `${m}:${String(s).padStart(2, "0")}` : `0:${String(s).padStart(2, "0")}`;
 }
 
+function getVideoTitle(video) {
+  const title = video && (video.title || video.name || video.archive_title || video.page_title || video.show_title);
+  return String(title || "").trim();
+}
+
 function VideoRow({ video, checked, onToggle }) {
+  const title = getVideoTitle(video) || video.bvid || "";
   return (
     <label className="bili-video-row">
       <input type="checkbox" checked={checked} onChange={onToggle} />
@@ -36,7 +42,7 @@ function VideoRow({ video, checked, onToggle }) {
         <span className="bili-video-dur">{fmtDuration(video.duration)}</span>
       </div>
       <div className="bili-video-meta">
-        <strong>{video.title}</strong>
+        <strong>{title}</strong>
         {video.owner && <span>{video.owner.name}</span>}
       </div>
     </label>
@@ -248,7 +254,7 @@ export default function BilibiliImportPage() {
   async function handleImport(videoList) {
     const videos = videoList.map((v) => ({
       bvid: v.bvid,
-      title: v.title,
+      title: getVideoTitle(v) || v.bvid,
       duration: String(v.duration || ""),
       thumbnail: v.pic || v.thumbnail || "",
     }));
