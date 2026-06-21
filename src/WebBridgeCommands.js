@@ -1250,8 +1250,8 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
 
     var imported = 0;
     var errors = [];
-    var lastDocMd5 = "";
-    var importQueue = [];
+    var opened = 0;
+    var openQueue = [];
 
     for (var i = 0; i < videos.length; i++) {
       var video = videos[i];
@@ -1268,30 +1268,33 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
       var mnvlinkFileName = normalizeMnvlinkFileName(title, bvid);
       var mnvlinkPath = biliDir + "/" + mnvlinkFileName;
 
-      if (fm.fileExistsAtPath(mnvlinkPath)) {
-        importQueue.push({ bvid: bvid, title: title, path: mnvlinkPath });
-        continue;
-      }
-
       try {
-        var mnvlinkContent = JSON.stringify({
-          url: "https://player.bilibili.com/player.html?bvid=" + bvid + "&page=1&danmaku=0",
-          duration: duration,
-          thumbnail: thumbnail,
-        });
+        if (!fm.fileExistsAtPath(mnvlinkPath)) {
+          var mnvlinkContent = JSON.stringify({
+            url: "https://player.bilibili.com/player.html?bvid=" + bvid + "&page=1&danmaku=0",
+            duration: duration,
+            thumbnail: thumbnail,
+          });
 
-        var nsData = NSData.dataWithStringEncoding(mnvlinkContent, 4);
-        if (!nsData) {
-          errors.push({ bvid: bvid, title: title, error: "Failed to encode .mnvlink content" });
-          continue;
-        }
-        var writeOk = nsData.writeToFileAtomically(mnvlinkPath, true);
-        if (!writeOk) {
-          errors.push({ bvid: bvid, title: title, error: "Failed to write .mnvlink file" });
-          continue;
+          var nsData = NSData.dataWithStringEncoding(mnvlinkContent, 4);
+          if (!nsData) {
+            errors.push({ bvid: bvid, title: title, error: "Failed to encode .mnvlink content" });
+            continue;
+          }
+          var writeOk = nsData.writeToFileAtomically(mnvlinkPath, true);
+          if (!writeOk) {
+            errors.push({ bvid: bvid, title: title, error: "Failed to write .mnvlink file" });
+            continue;
+          }
         }
 
-        importQueue.push({ bvid: bvid, title: title, path: mnvlinkPath });
+        var docMd5 = appInstance().importDocument(mnvlinkPath);
+        if (docMd5) {
+          imported++;
+          openQueue.push({ bvid: bvid, title: title, docMd5: String(docMd5) });
+        } else {
+          errors.push({ bvid: bvid, title: title, error: "importDocument returned empty" });
+        }
       } catch (e) {
         errors.push({ bvid: bvid, title: title, error: String(e) });
       }
@@ -1299,55 +1302,50 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
 
     return new Promise(function (resolve) {
       function finishImport() {
-        if (lastDocMd5) {
-          try {
-            var studyController = studyControllerForContext(context);
-            var notebookId = String(studyController.notebookController ? studyController.notebookController.notebookId : "");
-            if (notebookId) {
-              studyController.openNotebookAndDocument(notebookId, lastDocMd5);
-            }
-          } catch (e) {
-            console.log("[ImportEverything] Failed to open last doc: " + String(e));
-          }
-        }
-
         resolve(responseOk("BILI_IMPORT_OK", "Bilibili import complete", {
           imported: imported,
           total: videos.length,
           errors: errors,
+          opened: opened,
         }));
       }
 
-      function importNext(index) {
-        if (index >= importQueue.length) {
+      function openNext(studyController, notebookId, index) {
+        if (index >= openQueue.length) {
           finishImport();
           return;
         }
 
-        var item = importQueue[index];
+        var item = openQueue[index];
         try {
-          var docMd5 = appInstance().importDocument(item.path);
-          if (docMd5) {
-            imported++;
-            lastDocMd5 = String(docMd5);
-          } else {
-            errors.push({ bvid: item.bvid, title: item.title, error: "importDocument returned empty" });
-          }
+          studyController.openNotebookAndDocument(notebookId, item.docMd5);
+          opened++;
         } catch (e) {
-          errors.push({ bvid: item.bvid, title: item.title, error: String(e) });
+          console.log("[ImportEverything] Failed to open doc: " + String(e));
         }
 
-        if (index + 1 >= importQueue.length) {
+        if (index + 1 >= openQueue.length) {
           finishImport();
           return;
         }
 
         NSTimer.scheduledTimerWithTimeInterval(BILIBILI_IMPORT_DOCUMENT_DELAY_SECONDS, false, function () {
-          importNext(index + 1);
+          openNext(studyController, notebookId, index + 1);
         });
       }
 
-      importNext(0);
+      try {
+        var studyController = studyControllerForContext(context);
+        var notebookId = String(studyController.notebookController ? studyController.notebookController.notebookId : "");
+        if (!notebookId || openQueue.length === 0) {
+          finishImport();
+          return;
+        }
+        openNext(studyController, notebookId, 0);
+      } catch (e) {
+        console.log("[ImportEverything] Failed to open docs: " + String(e));
+        finishImport();
+      }
     });
   }
 
