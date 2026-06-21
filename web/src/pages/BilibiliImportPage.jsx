@@ -23,8 +23,31 @@ function fmtDuration(sec) {
 }
 
 function getVideoTitle(video) {
-  const title = video && (video.title || video.name || video.archive_title || video.page_title || video.show_title);
-  return String(title || "").trim();
+  if (!video) {
+    return "";
+  }
+  const candidates = [
+    video.title,
+    video.name,
+    video.archive_title,
+    video.page_title,
+    video.show_title,
+  ];
+  for (const candidate of candidates) {
+    const title = String(candidate || "").trim();
+    if (title && title.toLowerCase() !== "bilibili") {
+      return title;
+    }
+  }
+  return "";
+}
+
+function requireVideoTitle(video) {
+  const title = getVideoTitle(video);
+  if (!title) {
+    throw new Error(`视频缺少标题: ${video && video.bvid ? video.bvid : "unknown"}`);
+  }
+  return title;
 }
 
 function VideoRow({ video, checked, onToggle }) {
@@ -252,15 +275,15 @@ export default function BilibiliImportPage() {
   }
 
   async function handleImport(videoList) {
-    const videos = videoList.map((v) => ({
-      bvid: v.bvid,
-      title: getVideoTitle(v) || v.bvid,
-      duration: String(v.duration || ""),
-      thumbnail: v.pic || v.thumbnail || "",
-    }));
-    setImportProgress({ current: 0, total: videos.length });
+    setImportProgress({ current: 0, total: videoList.length });
     go("importing");
     try {
+      const videos = videoList.map((v) => ({
+        bvid: v.bvid,
+        title: requireVideoTitle(v),
+        duration: String(v.duration || ""),
+        thumbnail: v.pic || v.thumbnail || "",
+      }));
       const result = await importVideos(videos);
       setImportResult(result);
       try {
