@@ -41,6 +41,19 @@ export function blobToBase64(blob) {
   });
 }
 
+function loadImageDimensions(mimeType, base64) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      resolve({ width: img.naturalWidth, height: img.naturalHeight });
+      img.onload = null;
+      img.onerror = null;
+    };
+    img.onerror = () => resolve({ width: 0, height: 0 });
+    img.src = `data:${mimeType};base64,${base64}`;
+  });
+}
+
 export async function extractXmindImage(topic, zip) {
   const image = topic.image;
   if (!image || typeof image !== "object") return null;
@@ -48,12 +61,14 @@ export async function extractXmindImage(topic, zip) {
   const src = image.src;
   if (!src || typeof src !== "string") return null;
 
-  const entry = zip.file(src);
+  const entry = zip.file(src.replace(/^xap:/, ''));
   if (!entry) return null;
 
   const blob = await entry.async("blob");
   const compressed = await compressImage(blob);
   const data = await blobToBase64(compressed);
+  const mimeType = compressed.type || "image/png";
+  const dimensions = await loadImageDimensions(mimeType, data);
 
-  return { mimeType: compressed.type || "image/png", data };
+  return { mimeType, data, ...dimensions };
 }

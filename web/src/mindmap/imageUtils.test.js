@@ -10,17 +10,55 @@ beforeAll(() => {
     }));
   }
 
-  if (typeof HTMLCanvasElement !== "undefined") {
-    HTMLCanvasElement.prototype.getContext = function () {
-      return {
+  if (typeof document === "undefined") {
+    const canvas = {
+      width: 0,
+      height: 0,
+      getContext: () => ({
         drawImage: () => {},
-        canvas: this,
-      };
+      }),
+      toBlob: (cb, type) => {
+        const blob = new Blob(["fake-image"], { type: type || "image/png" });
+        cb(blob);
+      },
     };
-    HTMLCanvasElement.prototype.toBlob = function (cb, type, quality) {
-      const blob = new Blob(["fake-image"], { type: type || "image/png" });
-      cb(blob);
-    };
+    vi.stubGlobal("document", {
+      createElement: () => canvas,
+    });
+  }
+
+  if (typeof Image === "undefined") {
+    vi.stubGlobal("Image", class {
+      constructor() {
+        this.naturalWidth = 200;
+        this.naturalHeight = 150;
+        this.onload = null;
+        this.onerror = null;
+        this._src = "";
+      }
+      set src(value) {
+        this._src = value;
+        if (this.onload) this.onload();
+      }
+      get src() { return this._src; }
+    });
+  }
+
+  if (typeof FileReader === "undefined") {
+    const btoa = (str) => Buffer.from(str, "binary").toString("base64");
+    vi.stubGlobal("FileReader", class {
+      onload = null;
+      onerror = null;
+      result = null;
+      readAsDataURL(blob) {
+        blob.text().then((text) => {
+          this.result = `data:${blob.type || "application/octet-stream"};base64,${btoa(text)}`;
+          if (this.onload) this.onload();
+        }).catch((err) => {
+          if (this.onerror) this.onerror(err);
+        });
+      }
+    });
   }
 });
 
@@ -84,5 +122,27 @@ describe("extractXmindImage", () => {
     expect(typeof result.data).toBe("string");
     expect(result.data.length).toBeGreaterThan(0);
     expect(result.mimeType).toBe("image/png");
+    expect(result.width).toBe(200);
+    expect(result.height).toBe(150);
+  });
+
+  it("处理带有 xap: 前缀的图片路径", async () => {
+    const { extractXmindImage } = await import("./imageUtils");
+    let calledPath;
+    const fakeBlob = new Blob(["fake-xap-png"], { type: "image/png" });
+    const zip = {
+      file: (path) => {
+        calledPath = path;
+        return path === "resources/image.png" ? { async: () => fakeBlob } : null;
+      },
+    };
+    const topic = { image: { src: "xap:resources/image.png" } };
+    const result = await extractXmindImage(topic, zip);
+    expect(calledPath).toBe("resources/image.png");
+    expect(result).not.toBeNull();
+    expect(result.data).toBe("ZmFrZS14YXAtcG5n");
+    expect(result.mimeType).toBe("image/png");
+    expect(result.width).toBe(200);
+    expect(result.height).toBe(150);
   });
 });

@@ -86,60 +86,64 @@ function buildTopicsById(value, maxDepth = 6) {
     return {};
   }
 
+  const result = {};
+
   if (Array.isArray(value)) {
-    const directMap = {};
-    value.forEach((item) => {
+    for (const item of value) {
       if (!isRecord(item)) {
-        return;
+        continue;
       }
 
       const idValue = item.id;
       if (typeof idValue !== "string" && typeof idValue !== "number") {
-        return;
+        Object.assign(result, buildTopicsById(item, maxDepth - 1));
+        continue;
       }
 
       if (
-        typeof item.title === "string" ||
-        typeof item.text === "string" ||
-        typeof item.name === "string"
+        (typeof item.title === "string" ||
+          typeof item.text === "string" ||
+          typeof item.name === "string") &&
+        item.class !== "sheet"
       ) {
-        directMap[String(idValue)] = item;
+        result[String(idValue)] = item;
       }
-    });
 
-    if (Object.keys(directMap).length > 0) {
-      return directMap;
+      Object.assign(result, buildTopicsById(item, maxDepth - 1));
     }
-
-    for (const item of value) {
-      const nested = buildTopicsById(item, maxDepth - 1);
-      if (Object.keys(nested).length > 0) {
-        return nested;
-      }
-    }
-    return {};
+    return result;
   }
 
   if (!isRecord(value)) {
     return {};
   }
 
+  const ownId = typeof value.id === "string" || typeof value.id === "number"
+    ? String(value.id) : null;
+  if (
+    ownId &&
+    value.class !== "sheet" &&
+    (typeof value.title === "string" ||
+      typeof value.text === "string" ||
+      typeof value.name === "string")
+  ) {
+    result[ownId] = value;
+  }
+
   const candidates = [value.topics, value.topic, value.resources];
   for (const candidate of candidates) {
-    const nested = buildTopicsById(candidate, maxDepth - 1);
-    if (Object.keys(nested).length > 0) {
-      return nested;
+    if (candidate != null) {
+      Object.assign(result, buildTopicsById(candidate, maxDepth - 1));
     }
   }
 
   for (const nestedValue of Object.values(value)) {
-    const nested = buildTopicsById(nestedValue, maxDepth - 1);
-    if (Object.keys(nested).length > 0) {
-      return nested;
+    if (nestedValue != null && typeof nestedValue === "object") {
+      Object.assign(result, buildTopicsById(nestedValue, maxDepth - 1));
     }
   }
 
-  return {};
+  return result;
 }
 
 function resolveTopicValue(value, topicsById) {

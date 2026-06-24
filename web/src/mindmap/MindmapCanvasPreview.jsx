@@ -19,10 +19,14 @@ function MindmapNodeCard({ node }) {
   const data = node.getData();
   const comment = typeof data.comment === "string" ? data.comment.trim() : "";
   const html = comment ? renderMarkdownToHtml(comment) : "";
+  const image = data.image;
 
   return (
     <article className={`mindmap-node-card ${data.isRoot ? "mindmap-node-card-root" : ""}`}>
       <div className="mindmap-node-title">{data.title}</div>
+      {image ? (
+        <img className="mindmap-node-image" src={`data:${image.mimeType};base64,${image.data}`} alt="" />
+      ) : null}
       {html ? (
         <div
           className="mindmap-node-markdown content-html"
@@ -55,6 +59,7 @@ function buildX6Cells(layout) {
     data: {
       title: node.title,
       comment: node.comment,
+      image: node.image || null,
       isRoot: node.isRoot,
     },
   }));
