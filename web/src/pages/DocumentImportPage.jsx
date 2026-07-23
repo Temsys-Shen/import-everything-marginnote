@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import PageTopbar from "../components/PageTopbar";
-import { runConversionPipeline, buildInitialDocuments } from "../pipeline/convertPipeline";
+import { runConversionPipeline, buildInitialDocuments, reconvertBySourceTypes } from "../pipeline/convertPipeline";
 import { ParseStatus } from "../pipeline/documentModel";
 import {
   buildMergedPreviewModel,
@@ -51,6 +51,19 @@ import {
   revokeAllObjectURLs,
   revokeObjectURLsForFiles,
 } from "../parsers/objectUrlRegistry";
+import EngineSettingsPopup from "../components/EngineSettingsPopup";
+import { registerLegacyJsEngine } from "../engines/legacyJsEngine";
+import { registerReamkitEngine } from "../engines/reamkitEngine";
+import { getDefaultEngineId } from "../engines/engineRegistry";
+
+let enginesInitialized = false;
+function ensureEnginesInitialized() {
+  if (!enginesInitialized) {
+    enginesInitialized = true;
+    registerLegacyJsEngine();
+    registerReamkitEngine();
+  }
+}
 function statusLabel(status) {
   if (status === ParseStatus.PENDING) return "待处理";
   if (status === ParseStatus.PROCESSING) return "处理中";
@@ -60,18 +73,20 @@ function statusLabel(status) {
 }
 
 function sourceTypeLabel(sourceType) {
-  if (sourceType === "docx") return "Word";
+  if (sourceType === "docx") return "Word (.docx)";
+  if (sourceType === "doc") return "Word (.doc)";
+  if (sourceType === "xlsx") return "Excel (.xlsx)";
+  if (sourceType === "xls") return "Excel (.xls)";
+  if (sourceType === "csv") return "CSV";
+  if (sourceType === "pptx") return "PowerPoint (.pptx)";
+  if (sourceType === "ppt") return "PowerPoint (.ppt)";
   if (sourceType === "rtf") return "RTF";
-  if (sourceType === "spreadsheet") return "表格";
-  if (sourceType === "pptx") return "演示文稿";
   if (sourceType === "markdown") return "Markdown";
   if (sourceType === "html") return "HTML";
   if (sourceType === "text") return "文本";
   if (sourceType === "epub") return "EPUB";
   if (sourceType === "image") return "图片";
   if (sourceType === "code") return "代码";
-  if (sourceType === "unsupported-doc") return "DOC不支持";
-  if (sourceType === "unsupported-ppt") return "PPT不支持";
   if (sourceType === "unsupported") return "暂不支持";
   return sourceType || "未知类型";
 }
@@ -311,6 +326,7 @@ function DocumentStatusList({ documents, problemsOnly = false }) {
 }
 
 function DocumentImportPage() {
+  ensureEnginesInitialized();
   const navigate = useNavigate();
   const [step, setStep] = useState("select");
   const [selectedFiles, setSelectedFiles] = useState([]);
@@ -356,6 +372,8 @@ function DocumentImportPage() {
   const [imageDisplayPresetId, setImageDisplayPresetId] = useState(DEFAULT_IMAGE_DISPLAY_PRESET_ID);
   const [previewZoomLevel, setPreviewZoomLevel] = useState(100);
   const [previewZoomTouched, setPreviewZoomTouched] = useState(false);
+  const [engineSelections, setEngineSelections] = useState({});
+  const [enginePopupOpen, setEnginePopupOpen] = useState(false);
   const [previewBaseSize, setPreviewBaseSize] = useState({
     width: 0,
     height: 0,
@@ -859,6 +877,7 @@ function DocumentImportPage() {
 
     try {
       await runConversionPipeline(selectedFiles, {
+        engineSelections,
         onDocumentsChange(nextDocs) {
           setDocuments(nextDocs);
         },
@@ -1019,6 +1038,44 @@ function DocumentImportPage() {
   function resetPreviewZoom() {
     setPreviewZoomTouched(true);
     setPreviewZoomLevel(100);
+  }
+
+  async function handleEngineChange(sourceType, engineId) {
+    const nextSelections = { ...engineSelections, [sourceType]: engineId };
+    setEngineSelections(nextSelections);
+    setEnginePopupOpen(false);
+
+    const filesToReconvert = selectedFiles.filter(
+      (_, i) => documents[i] && documents[i].sourceType === sourceType
+    );
+    if (filesToReconvert.length === 0) return;
+
+    try {
+      setIsConverting(true);
+      setCurrentProgress({
+        fileIndex: 0,
+        totalFiles: filesToReconvert.length,
+        fileName: filesToReconvert[0].name,
+        stage: "reconvert",
+        current: 0,
+        total: 1,
+        ratioHint: 0.08,
+      });
+
+      const updatedDocs = await reconvertBySourceTypes(selectedFiles, documents, [sourceType], {
+        engineSelections: nextSelections,
+        onDocumentsChange(nextDocs) {
+          setDocuments(nextDocs);
+        },
+        onProgress(progress) {
+          setCurrentProgress(progress);
+        },
+      });
+      setDocuments(updatedDocs);
+    } finally {
+      setIsConverting(false);
+      setCurrentProgress(null);
+    }
   }
 
   async function handleSaveStyle() {
@@ -1265,6 +1322,21 @@ function DocumentImportPage() {
 
       <div className="settings-block">
         <div className="field-row">
+          <label className="field-label">转换引擎</label>
+          <button
+            type="button"
+            className="button button-ghost button-small"
+            onClick={() => setEnginePopupOpen(true)}
+            disabled={isConverting}
+          >
+            设置
+          </button>
+        </div>
+        <p className="muted-text">按扩展名切换文档转换引擎，部分格式支持 ReamKit 或内置引擎。</p>
+      </div>
+
+      <div className="settings-block">
+        <div className="field-row">
           <label className="field-label">样式预设</label>
           <div className="card-actions">
             <button
@@ -1465,8 +1537,10 @@ function DocumentImportPage() {
   );
 
   return (
-    <div className="app-shell">
-      <PageTopbar label="文档导入" onBack={() => navigate("/")} />
+    <div className={`app-shell${step === "result" ? " step-result" : ""}`}>
+      {step !== "result" ? (
+        <PageTopbar label="文档导入" onBack={() => navigate("/")} />
+      ) : null}
       {themeCssText ? <style>{themeCssText}</style> : null}
 
       <main className="shell-content">
@@ -1532,7 +1606,7 @@ function DocumentImportPage() {
         ) : null}
 
         {step === "result" ? (
-          <section className="surface result-surface">
+          <section className="surface result-surface result-layout">
             <div className="result-toolbar">
               <div className="summary-row">
                 <span>{successCount}个成功</span>
@@ -1570,78 +1644,86 @@ function DocumentImportPage() {
               </div>
             ) : null}
 
-            <div className="result-main-stack">
-              <section className="preview-stage">
-                <div className="preview-stage-head">
-                  <div className="preview-stage-title">
-                    <h2>正文预览</h2>
-                  </div>
-
-                  <div className="preview-stage-tools">
-                    <div className="preview-zoom-control">
-                      <span className="preview-zoom-label">缩放</span>
-                      <button
-                        type="button"
-                        className="button button-ghost button-small"
-                        onClick={() => adjustPreviewZoom(-PREVIEW_ZOOM_STEP)}
-                        disabled={previewZoomLevel <= PREVIEW_ZOOM_MIN}
-                      >
-                        缩小
-                      </button>
-                      <input
-                        className="preview-zoom-range"
-                        type="range"
-                        min={PREVIEW_ZOOM_MIN}
-                        max={PREVIEW_ZOOM_MAX}
-                        step={PREVIEW_ZOOM_STEP}
-                        value={previewZoomLevel}
-                        onChange={(event) => {
-                          setPreviewZoomTouched(true);
-                          setPreviewZoomLevel(clampPreviewZoom(event.target.value));
-                        }}
-                        aria-label="调整预览缩放"
-                      />
-                      <button
-                        type="button"
-                        className="button button-ghost button-small"
-                        onClick={() => adjustPreviewZoom(PREVIEW_ZOOM_STEP)}
-                        disabled={previewZoomLevel >= PREVIEW_ZOOM_MAX}
-                      >
-                        放大
-                      </button>
-                      <button
-                        type="button"
-                        className="button button-secondary button-small"
-                        onClick={resetPreviewZoom}
-                        disabled={previewZoomLevel === 100}
-                      >
-                        100%
-                      </button>
-                      <span className="preview-zoom-value">{previewZoomLevel}%</span>
-                    </div>
-                  </div>
+            <div className="result-fixed-headers">
+              <div className="preview-stage-head">
+                <div className="preview-stage-title">
+                  <h2>正文预览</h2>
                 </div>
 
-                <div className="preview-stage-body">
-                  <div className="preview-viewport" ref={previewViewportRef}>
-                    <div className="preview-zoom-shell" style={previewZoomShellStyle}>
-                      <div
-                        className="preview-zoom-stage"
-                        style={previewZoomStageStyle}
-                      >
-                        <MergedPreview
-                          model={activePreviewModel}
-                          variant="panel"
-                          rootId="result-preview-root"
-                          emptyText="没有成功转换的正文内容。"
-                          styleId={activeStyleId || "default"}
-                          imagePresetId={imageDisplayPresetId}
-                        />
-                      </div>
-                    </div>
+                <div className="preview-stage-tools">
+                  <div className="preview-zoom-control">
+                    <span className="preview-zoom-label">缩放</span>
+                    <button
+                      type="button"
+                      className="button button-ghost button-small"
+                      onClick={() => adjustPreviewZoom(-PREVIEW_ZOOM_STEP)}
+                      disabled={previewZoomLevel <= PREVIEW_ZOOM_MIN}
+                    >
+                      缩小
+                    </button>
+                    <input
+                      className="preview-zoom-range"
+                      type="range"
+                      min={PREVIEW_ZOOM_MIN}
+                      max={PREVIEW_ZOOM_MAX}
+                      step={PREVIEW_ZOOM_STEP}
+                      value={previewZoomLevel}
+                      onChange={(event) => {
+                        setPreviewZoomTouched(true);
+                        setPreviewZoomLevel(clampPreviewZoom(event.target.value));
+                      }}
+                      aria-label="调整预览缩放"
+                    />
+                    <button
+                      type="button"
+                      className="button button-ghost button-small"
+                      onClick={() => adjustPreviewZoom(PREVIEW_ZOOM_STEP)}
+                      disabled={previewZoomLevel >= PREVIEW_ZOOM_MAX}
+                    >
+                      放大
+                    </button>
+                    <button
+                      type="button"
+                      className="button button-secondary button-small"
+                      onClick={resetPreviewZoom}
+                      disabled={previewZoomLevel === 100}
+                    >
+                      100%
+                    </button>
+                    <span className="preview-zoom-value">{previewZoomLevel}%</span>
                   </div>
                 </div>
-              </section>
+              </div>
+            </div>
+
+            <div className="result-scroll-wrap" ref={previewViewportRef}>
+              <div className="result-page-topbar">
+                <button
+                  type="button"
+                  className="button button-ghost button-small"
+                  onClick={returnToSelection}
+                >
+                  ← 文档导入
+                </button>
+              </div>
+
+              <div className="preview-stage-body">
+                <div className="preview-zoom-shell" style={previewZoomShellStyle}>
+                  <div
+                    className="preview-zoom-stage"
+                    style={previewZoomStageStyle}
+                  >
+                    <MergedPreview
+                      model={activePreviewModel}
+                      variant="panel"
+                      rootId="result-preview-root"
+                      emptyText="没有成功转换的正文内容。"
+                      styleId={activeStyleId || "default"}
+                      imagePresetId={imageDisplayPresetId}
+                    />
+                  </div>
+                </div>
+              </div>
 
               {problemDocuments.length > 0 ? (
                 <div className="detail-block">
@@ -1760,23 +1842,36 @@ function DocumentImportPage() {
             className={`drawer-panel ${settingsDrawerOpen ? "drawer-panel-open" : ""}`}
             aria-hidden={settingsDrawerOpen ? "false" : "true"}
           >
-            <div className="drawer-head">
-              <div>
-                <h2>导入设置</h2>
+            <button
+              type="button"
+              className="drawer-close-side"
+              onClick={closeSettingsDrawer}
+              aria-label="关闭导入设置"
+            >
+              <span className="drawer-close-side-icon">✕</span>
+            </button>
+            <div className="drawer-inner">
+              <div className="drawer-head" onClick={closeSettingsDrawer}>
+                <div className="drawer-head-left">
+                  <span className="drawer-chevron">❮</span>
+                  <h2>导入设置</h2>
+                </div>
               </div>
-              <button
-                type="button"
-                className="button button-ghost button-small"
-                onClick={closeSettingsDrawer}
-              >
-                关闭
-              </button>
-            </div>
-            <div className="drawer-body">
-              {exportSettingsContent}
+              <div className="drawer-body">
+                {exportSettingsContent}
+              </div>
             </div>
           </aside>
         </div>
+      ) : null}
+
+      {enginePopupOpen ? (
+        <EngineSettingsPopup
+          documents={documents}
+          engineSelections={engineSelections}
+          onApply={handleEngineChange}
+          onClose={() => setEnginePopupOpen(false)}
+        />
       ) : null}
     </div>
   );

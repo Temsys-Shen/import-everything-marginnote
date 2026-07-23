@@ -12,11 +12,12 @@ export function nextDocumentId() {
   return `doc-${Date.now()}-${docCounter}`;
 }
 
-export function createEmptyNormalizedDocument({ id, name, sourceType }) {
+export function createEmptyNormalizedDocument({ id, name, sourceType, engineId }) {
   return {
     id,
     name,
     sourceType,
+    engineId: engineId || "legacy-js",
     parseStatus: ParseStatus.PENDING,
     error: null,
     sections: [],

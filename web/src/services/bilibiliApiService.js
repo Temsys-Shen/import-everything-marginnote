@@ -54,6 +54,57 @@ export async function fetchVideoInfo(input) {
   throw new Error("无法识别的 BVID/AV");
 }
 
+export function expandPages(videoData, bvid, page) {
+  if (!videoData || !videoData.pages || videoData.pages.length <= 1) {
+    return [{
+      bvid: bvid || videoData.bvid,
+      title: videoData.title,
+      page: page || 1,
+      cid: videoData.pages && videoData.pages[0] ? videoData.pages[0].cid : null,
+      duration: videoData.duration,
+      pic: videoData.pic,
+      owner: videoData.owner,
+      stat: videoData.stat,
+    }];
+  }
+
+  return videoData.pages.map((pg) => ({
+    bvid: bvid || videoData.bvid,
+    title: videoData.title,
+    part: pg.part || "",
+    page: pg.page,
+    cid: pg.cid,
+    duration: pg.duration,
+    pic: videoData.pic,
+    owner: videoData.owner,
+    stat: videoData.stat,
+  }));
+}
+
+async function fetchAllPages(fetchFn, ...args) {
+  const allItems = [];
+  let page = 1;
+  let hasMore = true;
+
+  while (hasMore) {
+    const data = await fetchFn(...args, page);
+    const archives = data?.archives || [];
+    if (archives.length === 0) {
+      hasMore = false;
+    } else {
+      for (const item of archives) {
+        allItems.push(item);
+      }
+      page += 1;
+      if (data.has_more === false) {
+        hasMore = false;
+      }
+    }
+  }
+
+  return allItems;
+}
+
 export async function fetchUserCollections(mid, page = 1) {
   const data = await apiGet("/x/polymer/web-space/seasons_series_list", {
     mid,
@@ -72,6 +123,10 @@ export async function fetchCollectionVideos(seasonId, mid, page = 1) {
   });
 }
 
+export async function fetchCollectionVideosAll(seasonId, mid) {
+  return fetchAllPages(fetchCollectionVideos, seasonId, mid);
+}
+
 export async function fetchSeriesVideos(seriesId, mid) {
   return apiGet("/x/series/archives", { series_id: seriesId, mid });
 }
@@ -88,8 +143,18 @@ export async function fetchFavoriteFolderVideos(mediaId, page = 1) {
   });
 }
 
+export async function fetchFavoriteFolderVideosAll(mediaId) {
+  return fetchAllPages(fetchFavoriteFolderVideos, mediaId);
+}
+
 export async function fetchFavoriteFolderInfo(mediaId) {
   return apiGet("/x/v3/fav/folder/info", { media_id: mediaId });
+}
+
+function pageFromParams(params) {
+  const p = params ? params.get("p") : null;
+  if (p && /^\d+$/.test(p) && Number(p) > 1) return Number(p);
+  return 1;
 }
 
 export function parseInput(input) {
@@ -97,10 +162,10 @@ export function parseInput(input) {
   if (!s) return { type: "empty" };
 
   // standalone BVID
-  if (/^BV1[A-Za-z0-9]{9}$/.test(s)) return { type: "bvid", value: s };
+  if (/^BV1[A-Za-z0-9]{9}$/.test(s)) return { type: "bvid", value: s, page: 1 };
   // standalone AVID
   let m = s.match(/^av(\d{1,20})$/i);
-  if (m) return { type: "avid", value: m[1] };
+  if (m) return { type: "avid", value: m[1], page: 1 };
   // standalone MID
   if (/^\d{5,20}$/.test(s)) return { type: "mid", value: s };
 
@@ -115,7 +180,7 @@ export function parseInput(input) {
   // b23.tv/BV1xxx
   if (host.endsWith("b23.tv")) {
     const bv = path.match(/\/(BV1[A-Za-z0-9]{9})/);
-    if (bv) return { type: "bvid", value: bv[1] };
+    if (bv) return { type: "bvid", value: bv[1], page: pageFromParams(params) };
     return { type: "unknown" };
   }
 
@@ -124,9 +189,9 @@ export function parseInput(input) {
   // bilibili.com/video/BV1xxx or /video/av123
   if (path.startsWith("/video/")) {
     const seg = path.slice(7);
-    if (seg.startsWith("BV")) return { type: "bvid", value: seg };
+    if (seg.startsWith("BV")) return { type: "bvid", value: seg, page: pageFromParams(params) };
     const av = seg.match(/^av(\d{1,20})$/i);
-    if (av) return { type: "avid", value: av[1] };
+    if (av) return { type: "avid", value: av[1], page: pageFromParams(params) };
     return { type: "unknown" };
   }
 

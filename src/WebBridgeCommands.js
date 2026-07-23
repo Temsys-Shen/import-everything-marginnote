@@ -1244,6 +1244,21 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
       return responseFail("BILI_IMPORT_NO_VIDEOS", "videos array is required");
     }
 
+    var panelWebView = null;
+    try {
+      panelWebView = context.controller.webView;
+    } catch (_) {}
+
+    function sendProgress(current, total) {
+      if (!panelWebView) return;
+      try {
+        panelWebView.evaluateJavaScript(
+          'window.__bilibiliProgress && window.__bilibiliProgress(' + JSON.stringify({ current: current, total: total }) + ')',
+          null
+        );
+      } catch (_) {}
+    }
+
     const biliDir = exportDirectoryPath() + "/BilibiliVideos";
     ensureDirectory(biliDir);
     const fm = fileManager();
@@ -1259,9 +1274,12 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
       var title = String(video.title || bvid).trim();
       var duration = video.duration ? String(video.duration) : "";
       var thumbnail = video.thumbnail ? String(video.thumbnail) : "";
+      var page = video.page ? String(video.page) : "1";
+      var cid = video.cid ? String(video.cid) : null;
 
       if (!bvid) {
         errors.push({ bvid: bvid, title: title, error: "Missing bvid" });
+        sendProgress(i + 1, videos.length);
         continue;
       }
 
@@ -1270,9 +1288,14 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
 
       try {
         if (!fm.fileExistsAtPath(mnvlinkPath)) {
+          var playerUrl = "https://player.bilibili.com/player.html?bvid=" + bvid + "&page=" + page + "&danmaku=0";
+          if (cid) {
+            playerUrl += "&cid=" + cid;
+          }
+
           var mnvlinkContent = JSON.stringify({
             title: title,
-            url: "https://player.bilibili.com/player.html?bvid=" + bvid + "&page=1&danmaku=0",
+            url: playerUrl,
             duration: duration,
             thumbnail: thumbnail,
           });
@@ -1280,11 +1303,13 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
           var nsData = NSData.dataWithStringEncoding(mnvlinkContent, 4);
           if (!nsData) {
             errors.push({ bvid: bvid, title: title, error: "Failed to encode .mnvlink content" });
+            sendProgress(i + 1, videos.length);
             continue;
           }
           var writeOk = nsData.writeToFileAtomically(mnvlinkPath, true);
           if (!writeOk) {
             errors.push({ bvid: bvid, title: title, error: "Failed to write .mnvlink file" });
+            sendProgress(i + 1, videos.length);
             continue;
           }
         }
@@ -1299,6 +1324,8 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
       } catch (e) {
         errors.push({ bvid: bvid, title: title, error: String(e) });
       }
+
+      sendProgress(i + 1, videos.length);
     }
 
     return new Promise(function (resolve) {

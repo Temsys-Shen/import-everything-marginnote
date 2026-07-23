@@ -15,7 +15,7 @@ module.exports = defineConfig({
     outDir: path.resolve(__dirname, "../src/web-dist"),
     emptyOutDir: true,
     sourcemap: false,
-    target: "es2018",
+    target: "es2020",
   },
   server: {
     host: "127.0.0.1",

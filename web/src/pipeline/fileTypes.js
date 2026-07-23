@@ -133,13 +133,14 @@ export function detectSourceType(file) {
   const mime = String(file.type || "").toLowerCase();
   const baseName = getFileBaseName(file.name).toLowerCase();
 
-  if (extension === "doc") return "unsupported-doc";
-  if (extension === "ppt") return "unsupported-ppt";
-
   if (extension === "docx") return "docx";
-  if (extension === "rtf") return "rtf";
-  if (extension === "xls" || extension === "xlsx" || extension === "csv") return "spreadsheet";
+  if (extension === "doc") return "doc";
+  if (extension === "xlsx") return "xlsx";
+  if (extension === "xls") return "xls";
+  if (extension === "csv") return "csv";
   if (extension === "pptx") return "pptx";
+  if (extension === "ppt") return "ppt";
+  if (extension === "rtf") return "rtf";
   if (extension === "md" || extension === "markdown" || extension === "mkd" || extension === "mkdn") return "markdown";
   if (extension === "html" || extension === "htm" || extension === "xhtml") return "html";
   if (extension === "txt") return "text";
@@ -232,14 +233,6 @@ export async function resolveSourceTypeForConversion(file, detectedSourceType) {
 }
 
 export function assertSupportedSourceType(sourceType, file) {
-  if (sourceType === "unsupported-doc") {
-    throw new Error(`Unsupported file type: ${file.name}. .doc is not supported in pure web prototype. Please convert to .docx first.`);
-  }
-
-  if (sourceType === "unsupported-ppt") {
-    throw new Error(`Unsupported file type: ${file.name}. .ppt is not supported in pure web prototype. Please convert to .pptx first.`);
-  }
-
   if (sourceType === "unsupported") {
     throw new Error(`Unsupported file type: ${file.name}. No parser available for this extension in the web prototype.`);
   }

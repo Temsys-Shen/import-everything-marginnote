@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import PageTopbar from "../components/PageTopbar";
 import {
@@ -6,10 +6,13 @@ import {
   fetchVideoInfo,
   fetchUserCollections,
   fetchCollectionVideos,
+  fetchCollectionVideosAll,
   fetchSeriesVideos,
   fetchFavoriteFolders,
   fetchFavoriteFolderVideos,
+  fetchFavoriteFolderVideosAll,
   fetchFavoriteFolderInfo,
+  expandPages,
   BILI_INPUT_HINT,
 } from "../services/bilibiliApiService";
 import { importVideos } from "../services/bilibiliImportService";
@@ -50,8 +53,14 @@ function requireVideoTitle(video) {
   return title;
 }
 
+function videoItemKey(video) {
+  if (video.page && video.page > 1) return video.bvid + "-p" + video.page;
+  return video.bvid;
+}
+
 function VideoRow({ video, checked, onToggle }) {
-  const title = getVideoTitle(video) || video.bvid || "";
+  const baseTitle = getVideoTitle(video) || video.bvid || "";
+  const title = video.part ? video.part + " · " + baseTitle : baseTitle;
   return (
     <label className="bili-video-row">
       <input type="checkbox" checked={checked} onChange={onToggle} />
@@ -67,6 +76,7 @@ function VideoRow({ video, checked, onToggle }) {
       <div className="bili-video-meta">
         <strong>{title}</strong>
         {video.owner && <span>{video.owner.name}</span>}
+        {video.page && video.page > 1 && <span className="bili-video-page-tag">P{video.page}</span>}
       </div>
     </label>
   );
@@ -92,6 +102,7 @@ export default function BilibiliImportPage() {
   const [input, setInput] = useState("");
   const [inputType, setInputType] = useState(null);
   const [parsedValue, setParsedValue] = useState("");
+  const [parsedPage, setParsedPage] = useState(1);
 
   const [singleVideo, setSingleVideo] = useState(null);
   const [userInfo, setUserInfo] = useState(null);
@@ -130,6 +141,7 @@ export default function BilibiliImportPage() {
     const p = parseInput(input);
     setInputType(p.type);
     setParsedValue(p.value);
+    setParsedPage(p.page || 1);
 
     if (p.type === "unknown" || p.type === "empty") {
       setError("无法识别的输入，请检查格式");
@@ -137,9 +149,9 @@ export default function BilibiliImportPage() {
     }
 
     if (p.type === "bvid") {
-      loadSingleVideo(p.value);
+      loadSingleVideo({ bvid: p.value, page: p.page || 1 });
     } else if (p.type === "avid") {
-      loadSingleVideo(p.value);
+      loadSingleVideo({ avid: p.value, page: p.page || 1 });
     } else if (p.type === "mid") {
       loadUserBrowse(p.value);
     } else if (p.type === "season") {
@@ -156,8 +168,18 @@ export default function BilibiliImportPage() {
     setError("");
     try {
       const data = await fetchVideoInfo(input);
-      setSingleVideo(data);
-      go("preview");
+      const bvid = input.bvid || data.bvid;
+      const expanded = expandPages(data, bvid, input.page || 1);
+
+      if (expanded.length > 1) {
+        setContainerInfo({ type: "multi-p", label: data.title || "多P视频", id: bvid });
+        setVideos(expanded);
+        setSelectedBvids(new Set(expanded.map((v) => v.bvid)));
+        go("videolist");
+      } else {
+        setSingleVideo(data);
+        go("preview");
+      }
     } catch (e) {
       setError(e?.message || String(e));
     } finally {
@@ -197,8 +219,7 @@ export default function BilibiliImportPage() {
     setError("");
     try {
       setContainerInfo({ type: "seasons", label: season.name, id: season.season_id });
-      const data = await fetchCollectionVideos(season.season_id, season.mid);
-      const list = data?.archives || [];
+      const list = await fetchCollectionVideosAll(season.season_id, season.mid);
       setVideos(list);
       setSelectedBvids(new Set(list.map((v) => v.bvid)));
       go("videolist");
@@ -238,8 +259,8 @@ export default function BilibiliImportPage() {
         // Folder title is optional; the video list request below is authoritative.
       }
       setContainerInfo({ type: "favorite", label, id: mediaId });
-      const data = await fetchFavoriteFolderVideos(mediaId);
-      const list = (data?.medias || []).map((m) => ({
+      const medias = await fetchFavoriteFolderVideosAll(mediaId);
+      const list = medias.map((m) => ({
         aid: m.id,
         bvid: m.bvid,
         title: m.title,
@@ -257,11 +278,11 @@ export default function BilibiliImportPage() {
     }
   }
 
-  function toggleSelect(bvid) {
+  function toggleSelect(key) {
     setSelectedBvids((prev) => {
       const next = new Set(prev);
-      if (next.has(bvid)) next.delete(bvid);
-      else next.add(bvid);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
   }
@@ -270,21 +291,45 @@ export default function BilibiliImportPage() {
     if (selectedBvids.size === videos.length) {
       setSelectedBvids(new Set());
     } else {
-      setSelectedBvids(new Set(videos.map((v) => v.bvid)));
+      setSelectedBvids(new Set(videos.map((v) => videoItemKey(v))));
     }
   }
+
+  function buildVideoImportItem(v) {
+    const title = v.part ? `${requireVideoTitle(v)} - ${v.part}` : requireVideoTitle(v);
+    return {
+      bvid: v.bvid,
+      title,
+      duration: String(v.duration || ""),
+      thumbnail: v.pic || v.thumbnail || "",
+      page: v.page || 1,
+      cid: v.cid || null,
+    };
+  }
+
+  useEffect(() => {
+    const handler = function (msg) {
+      setImportProgress(function (prev) {
+        if (!prev) return prev;
+        return { ...prev, current: msg.current || 0 };
+      });
+    };
+    window.__bilibiliProgress = handler;
+    return function () {
+      delete window.__bilibiliProgress;
+    };
+  }, []);
 
   async function handleImport(videoList) {
     setImportProgress({ current: 0, total: videoList.length });
     go("importing");
     try {
-      const videos = videoList.map((v) => ({
-        bvid: v.bvid,
-        title: requireVideoTitle(v),
-        duration: String(v.duration || ""),
-        thumbnail: v.pic || v.thumbnail || "",
-      }));
+      const videos = videoList.map((v) => buildVideoImportItem(v));
       const result = await importVideos(videos);
+      setImportProgress(function (prev) {
+        if (!prev) return prev;
+        return { ...prev, current: prev.total };
+      });
       setImportResult(result);
       try {
         await completeImportWithNotice(buildImportSuccessMessage(result));
@@ -463,14 +508,17 @@ export default function BilibiliImportPage() {
           )}
 
           <div className="bili-video-list">
-            {videos.map((v) => (
-              <VideoRow
-                key={v.bvid}
-                video={v}
-                checked={selectedBvids.has(v.bvid)}
-                onToggle={() => toggleSelect(v.bvid)}
-              />
-            ))}
+            {videos.map((v) => {
+              const key = videoItemKey(v);
+              return (
+                <VideoRow
+                  key={key}
+                  video={v}
+                  checked={selectedBvids.has(key)}
+                  onToggle={() => toggleSelect(key)}
+                />
+              );
+            })}
             {videos.length === 0 && <p className="muted-text">该合集暂无视频</p>}
           </div>
 
@@ -480,7 +528,7 @@ export default function BilibiliImportPage() {
               className="button button-primary button-grow"
               disabled={selectedCount === 0 || loading}
               onClick={() => {
-                const selected = videos.filter((v) => selectedBvids.has(v.bvid));
+                const selected = videos.filter((v) => selectedBvids.has(videoItemKey(v)));
                 handleImport(selected);
               }}
             >
