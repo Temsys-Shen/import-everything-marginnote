@@ -1191,11 +1191,12 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
     if (!url) {
       return responseFail("BILI_API_INVALID_URL", "URL is required");
     }
+    const referer = String(payload.referer || "https://www.bilibili.com").trim();
 
     var nsUrl = NSURL.URLWithString(url);
     var request = NSMutableURLRequest.requestWithURL(nsUrl);
     request.setTimeoutInterval(20);
-    request.setValueForHTTPHeaderField("https://www.bilibili.com", "Referer");
+    request.setValueForHTTPHeaderField(referer, "Referer");
     request.setValueForHTTPHeaderField("Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X)", "User-Agent");
 
     return new Promise(function (resolve) {
@@ -1231,6 +1232,66 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
           resolve(responseOk("BILI_API_OK", "API fetched", {
             statusCode: statusCode,
             bodyB64: bodyB64,
+          }));
+        }
+      );
+    });
+  }
+
+  function bilibiliResolveUrl(context, payload) {
+    if (!payload || typeof payload !== "object") {
+      return responseFail("BILI_RESOLVE_INVALID_PAYLOAD", "payload must be an object");
+    }
+    const url = String(payload.url || "").trim();
+    if (!url) {
+      return responseFail("BILI_RESOLVE_INVALID_URL", "URL is required");
+    }
+
+    var nsUrl = NSURL.URLWithString(url);
+    if (isBridgeNil(nsUrl)) {
+      return responseFail("BILI_RESOLVE_INVALID_URL", "Invalid URL: " + url);
+    }
+
+    var request = NSMutableURLRequest.requestWithURL(nsUrl);
+    request.setTimeoutInterval(20);
+    request.setValueForHTTPHeaderField("https://www.bilibili.com", "Referer");
+    request.setValueForHTTPHeaderField("Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X)", "User-Agent");
+
+    return new Promise(function (resolve) {
+      NSURLConnection.sendAsynchronousRequestQueueCompletionHandler(
+        request,
+        NSOperationQueue.mainQueue(),
+        function (response, data, error) {
+          if (!isBridgeNil(error)) {
+            var errMsg = "";
+            if (!isBridgeNil(error.localizedDescription)) errMsg = String(error.localizedDescription);
+            else if (!isBridgeNil(error.code)) errMsg = "code " + String(error.code);
+            var domain = "";
+            var code = "";
+            if (!isBridgeNil(error.domain)) domain = String(error.domain);
+            if (!isBridgeNil(error.code)) code = String(error.code);
+            resolve(responseFail("BILI_RESOLVE_ERROR", errMsg + " (" + domain + " " + code + ")"));
+            return;
+          }
+
+          var httpResponse = response;
+          var statusCode = httpResponse ? httpResponse.statusCode() : 0;
+          var finalUrl = "";
+          if (httpResponse && httpResponse.URL) {
+            finalUrl = String(httpResponse.URL());
+          }
+          if (!finalUrl) {
+            resolve(responseFail("BILI_RESOLVE_EMPTY_URL", "No final URL resolved from: " + url, {
+              statusCode: statusCode,
+              originalUrl: url,
+            }));
+            return;
+          }
+
+          resolve(responseOk("BILI_RESOLVE_OK", "URL resolved", {
+            statusCode: statusCode,
+            originalUrl: url,
+            finalUrl: finalUrl,
           }));
         }
       );
@@ -1403,6 +1464,7 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
     savePdfFinalize: wrapCommand("savePdfFinalize", savePdfFinalize),
     savePdfAbort: wrapCommand("savePdfAbort", savePdfAbort),
     bilibiliApiProxy: bilibiliApiProxy,
+    bilibiliResolveUrl: bilibiliResolveUrl,
     importBilibiliVideos: importBilibiliVideos,
     fetchImageForExport: fetchImageForExport,
     captureHtmlAsPdf: captureHtmlAsPdf,

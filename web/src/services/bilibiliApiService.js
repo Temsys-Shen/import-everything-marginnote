@@ -1,6 +1,11 @@
 import MNBridge from "../lib/mnBridge";
 
 const API_BASE = "https://api.bilibili.com";
+const BVID_PATTERN = /BV[A-Za-z0-9]{10}/;
+const BVID_EXACT_PATTERN = /^BV[A-Za-z0-9]{10}$/;
+const AVID_EXACT_PATTERN = /^av(\d{1,20})$/i;
+const URL_PATTERN = /(?:https?:\/\/)?(?:[A-Za-z0-9-]+\.)?bilibili\.com\/[^\s，。；、"'<>]+|(?:https?:\/\/)?b23\.tv\/[^\s，。；、"'<>]+/i;
+const UNSUPPORTED_MESSAGE = "不支持该类型B站链接，请使用普通BV/av视频、UP空间、合集、系列或收藏夹链接";
 
 async function apiGet(endpoint, params = {}) {
   const qs = Object.entries(params)
@@ -8,8 +13,11 @@ async function apiGet(endpoint, params = {}) {
     .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
     .join("&");
   const url = `${API_BASE}${endpoint}${qs ? "?" + qs : ""}`;
+  const referer = endpoint.startsWith("/x/polymer/web-space") || endpoint.startsWith("/x/v3/fav/folder/collected/list")
+    ? "https://space.bilibili.com"
+    : "https://www.bilibili.com";
 
-  const res = await MNBridge.send("bilibiliApiProxy", { url });
+  const res = await MNBridge.send("bilibiliApiProxy", { url, referer });
   if (!res || !res.ok) {
     const code = res?.code ? ` ${res.code}` : "";
     throw new Error(`B站API请求失败${code}: ${res?.message || "未知错误"} (${endpoint})`);
@@ -44,6 +52,14 @@ async function apiGet(endpoint, params = {}) {
 }
 
 export async function fetchVideoInfo(input) {
+  if (input && typeof input === "object") {
+    if (input.bvid) {
+      return apiGet("/x/web-interface/view", { bvid: input.bvid });
+    }
+    if (input.avid) {
+      return apiGet("/x/web-interface/view", { aid: input.avid });
+    }
+  }
   const parsed = parseInput(input);
   if (parsed.type === "bvid") {
     return apiGet("/x/web-interface/view", { bvid: parsed.value });
@@ -55,13 +71,18 @@ export async function fetchVideoInfo(input) {
 }
 
 export function expandPages(videoData, bvid, page) {
-  if (!videoData || !videoData.pages || videoData.pages.length <= 1) {
+  if (!videoData) {
+    throw new Error("B站视频数据为空");
+  }
+
+  if (!videoData.pages || videoData.pages.length <= 1) {
+    const firstPage = videoData.pages && videoData.pages[0] ? videoData.pages[0] : null;
     return [{
       bvid: bvid || videoData.bvid,
       title: videoData.title,
       page: page || 1,
-      cid: videoData.pages && videoData.pages[0] ? videoData.pages[0].cid : null,
-      duration: videoData.duration,
+      cid: firstPage ? firstPage.cid : null,
+      duration: firstPage && firstPage.duration ? firstPage.duration : videoData.duration,
       pic: videoData.pic,
       owner: videoData.owner,
       stat: videoData.stat,
@@ -88,11 +109,11 @@ async function fetchAllPages(fetchFn, ...args) {
 
   while (hasMore) {
     const data = await fetchFn(...args, page);
-    const archives = data?.archives || [];
-    if (archives.length === 0) {
+    const items = data?.archives || data?.medias || data?.list || [];
+    if (items.length === 0) {
       hasMore = false;
     } else {
-      for (const item of archives) {
+      for (const item of items) {
         allItems.push(item);
       }
       page += 1;
@@ -135,6 +156,19 @@ export async function fetchFavoriteFolders(upMid) {
   return apiGet("/x/v3/fav/folder/created/list-all", { up_mid: upMid });
 }
 
+export async function fetchCollectedFolders(upMid, page = 1) {
+  return apiGet("/x/v3/fav/folder/collected/list", {
+    up_mid: upMid,
+    pn: page,
+    ps: 20,
+    platform: "web",
+  });
+}
+
+export async function fetchCollectedFoldersAll(upMid) {
+  return fetchAllPages(fetchCollectedFolders, upMid);
+}
+
 export async function fetchFavoriteFolderVideos(mediaId, page = 1) {
   return apiGet("/x/v3/fav/resource/list", {
     media_id: mediaId,
@@ -157,14 +191,44 @@ function pageFromParams(params) {
   return 1;
 }
 
+function stripTrailingUrlPunctuation(value) {
+  return String(value || "").replace(/[),.;!?，。；、）】》]+$/g, "");
+}
+
+function extractInputCandidate(input) {
+  const s = String(input || "").trim();
+  if (!s) return "";
+
+  const urlMatch = s.match(URL_PATTERN);
+  if (urlMatch) return stripTrailingUrlPunctuation(urlMatch[0]);
+
+  const bvMatch = s.match(BVID_PATTERN);
+  if (bvMatch) return bvMatch[0];
+
+  const avMatch = s.match(/(?:^|[^\w])av(\d{1,20})(?:$|[^\w])/i);
+  if (avMatch) return `av${avMatch[1]}`;
+
+  return s;
+}
+
+function unsupported(type) {
+  return { type: "unsupported", value: type, message: UNSUPPORTED_MESSAGE };
+}
+
+function normalizeMediaListId(rawId) {
+  const id = String(rawId || "").replace(/^ml/i, "");
+  if (/^\d{1,20}$/.test(id)) return id;
+  return "";
+}
+
 export function parseInput(input) {
-  const s = String(input).trim();
+  const s = extractInputCandidate(input);
   if (!s) return { type: "empty" };
 
   // standalone BVID
-  if (/^BV1[A-Za-z0-9]{9}$/.test(s)) return { type: "bvid", value: s, page: 1 };
+  if (BVID_EXACT_PATTERN.test(s)) return { type: "bvid", value: s, page: 1 };
   // standalone AVID
-  let m = s.match(/^av(\d{1,20})$/i);
+  let m = s.match(AVID_EXACT_PATTERN);
   if (m) return { type: "avid", value: m[1], page: 1 };
   // standalone MID
   if (/^\d{5,20}$/.test(s)) return { type: "mid", value: s };
@@ -177,19 +241,26 @@ export function parseInput(input) {
   const path = url.pathname.replace(/\/+$/, "");
   const params = url.searchParams;
 
-  // b23.tv/BV1xxx
+  if (path.startsWith("/bangumi/") || path.startsWith("/live/") || path.startsWith("/read/") || path.startsWith("/cheese/")) {
+    return unsupported(path.split("/").filter(Boolean)[0]);
+  }
+
+  if (host.startsWith("live.bilibili.com") || host.startsWith("t.bilibili.com") || host.startsWith("www.bilibili.com") && path.startsWith("/read/")) {
+    return unsupported(host.startsWith("live.") ? "live" : "read");
+  }
+
   if (host.endsWith("b23.tv")) {
-    const bv = path.match(/\/(BV1[A-Za-z0-9]{9})/);
+    const bv = path.match(new RegExp(`\\/(${BVID_PATTERN.source})`));
     if (bv) return { type: "bvid", value: bv[1], page: pageFromParams(params) };
-    return { type: "unknown" };
+    return { type: "shortlink", value: url.toString() };
   }
 
   if (!host.endsWith("bilibili.com")) return { type: "unknown" };
 
   // bilibili.com/video/BV1xxx or /video/av123
   if (path.startsWith("/video/")) {
-    const seg = path.slice(7);
-    if (seg.startsWith("BV")) return { type: "bvid", value: seg, page: pageFromParams(params) };
+    const seg = path.slice(7).split("/")[0];
+    if (BVID_EXACT_PATTERN.test(seg)) return { type: "bvid", value: seg, page: pageFromParams(params) };
     const av = seg.match(/^av(\d{1,20})$/i);
     if (av) return { type: "avid", value: av[1], page: pageFromParams(params) };
     return { type: "unknown" };
@@ -199,6 +270,7 @@ export function parseInput(input) {
   //   /{mid}              → user space
   //   /{mid}/favlist?fid= → favorite folder
   //   /{mid}/lists/{id}   → collection/series
+  //   /{mid}/channel/collectiondetail?sid= → legacy collection
   if (host.endsWith("space.bilibili.com")) {
     const parts = path.split("/").filter(Boolean);
     const mid = parts[0];
@@ -207,6 +279,11 @@ export function parseInput(input) {
     // /{mid}/favlist?fid=xxx
     if (action === "favlist") {
       const fid = params.get("fid");
+      const ftype = (params.get("ftype") || "").toLowerCase();
+      const ctype = params.get("ctype");
+      if (fid && /^\d{1,20}$/.test(fid) && ftype === "collect" && ctype === "21") {
+        return { type: "collected-season", value: fid, mid };
+      }
       if (fid && /^\d{1,20}$/.test(fid)) return { type: "favorite", value: fid };
       return { type: "mid", value: mid };
     }
@@ -222,19 +299,29 @@ export function parseInput(input) {
       }
       return { type: "mid", value: mid };
     }
+    if (action === "channel" && parts[2] && parts[2].toLowerCase() === "collectiondetail") {
+      const sid = params.get("sid");
+      if (sid && /^\d{1,20}$/.test(sid)) return { type: "season", value: sid, mid };
+      return { type: "mid", value: mid };
+    }
     return { type: "mid", value: mid };
   }
 
-  // medialist/play/{id} or medialist/detail/{id}
+  // medialist/play/{id}, medialist/detail/{id}, or list/ml{id}
   if (path.startsWith("/medialist/play/") || path.startsWith("/medialist/detail/")) {
-    const id = path.split("/").pop();
-    if (/^\d{1,20}$/.test(id)) return { type: "favorite", value: id };
+    const id = normalizeMediaListId(path.split("/").pop());
+    if (id) return { type: "favorite", value: id };
+    return { type: "unknown" };
+  }
+  if (path.startsWith("/list/")) {
+    const id = normalizeMediaListId(path.split("/").pop());
+    if (id) return { type: "favorite", value: id };
     return { type: "unknown" };
   }
 
   // Fallback: search path for BVID/av
-  const bv = path.match(/(BV1[A-Za-z0-9]{9})/);
-  if (bv) return { type: "bvid", value: bv[1] };
+  const bv = path.match(BVID_PATTERN);
+  if (bv) return { type: "bvid", value: bv[0] };
   const av = path.match(/av(\d{1,20})/i);
   if (av) return { type: "avid", value: av[1] };
 
@@ -247,10 +334,31 @@ function tryURL(str) {
   return null;
 }
 
+export async function resolveBilibiliInput(input) {
+  const parsed = parseInput(input);
+  if (parsed.type === "shortlink") {
+    const res = await MNBridge.send("bilibiliResolveUrl", { url: parsed.value });
+    if (!res || !res.ok) {
+      const code = res?.code ? ` ${res.code}` : "";
+      throw new Error(`B站短链解析失败${code}: ${res?.message || "未知错误"}`);
+    }
+    const finalUrl = String(res.data?.finalUrl || "").trim();
+    if (!finalUrl) {
+      throw new Error(`B站短链解析失败: 未获得最终地址 (${parsed.value})`);
+    }
+    const resolved = parseInput(finalUrl);
+    if (resolved.type === "shortlink") {
+      throw new Error(`B站短链解析失败: 最终地址仍是短链 (${finalUrl})`);
+    }
+    return resolved;
+  }
+  return parsed;
+}
+
 export function extractBVID(input) {
   const parsed = parseInput(input);
   if (parsed.type === "bvid") return parsed.value;
   return null;
 }
 
-export const BILI_INPUT_HINT = "支持 BVID / av号 / 视频链接 / b23.tv短链 / 用户MID / 用户空间链接 / 收藏夹链接";
+export const BILI_INPUT_HINT = "支持 BVID / av号 / 视频链接 / b23.tv短链 / 分享文案 / 用户MID / 用户空间链接 / 收藏夹链接";

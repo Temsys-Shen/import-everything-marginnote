@@ -280,6 +280,34 @@ ol {
   font-size: 12px;
 }
 
+.source-segmented {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-soft);
+}
+
+.source-segmented-button {
+  appearance: none;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  min-height: 36px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.source-segmented-button-active {
+  background: var(--surface);
+  border-color: var(--line);
+  color: var(--text);
+  box-shadow: 0 2px 6px rgba(24, 32, 24, 0.06);
+}
+
 .upload-dropzone {
   position: relative;
   border: 1px dashed #b7c6bb;
@@ -311,6 +339,55 @@ ol {
 .upload-dropzone small {
   font-size: 12px;
   color: var(--muted);
+}
+
+.markdown-source-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.markdown-title-field {
+  display: grid;
+  gap: 6px;
+}
+
+.markdown-title-field span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.markdown-title-field input,
+.markdown-textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fbfcfa;
+  color: var(--text);
+  outline: none;
+}
+
+.markdown-title-field input:focus,
+.markdown-textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.markdown-title-field input {
+  min-height: 40px;
+  padding: 0 12px;
+}
+
+.markdown-textarea {
+  min-height: 210px;
+  resize: vertical;
+  padding: 12px;
+  line-height: 1.55;
+}
+
+.markdown-source-actions {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .mindmap-dropzone {
@@ -1935,6 +2012,11 @@ ol {
   .card-actions {
     width: 100%;
     justify-content: stretch;
+  }
+
+  .markdown-source-actions,
+  .markdown-source-actions .button {
+    width: 100%;
   }
 
   .mindmap-preview-toolbar .card-actions {

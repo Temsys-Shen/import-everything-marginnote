@@ -158,6 +158,7 @@ const PREVIEW_ZOOM_MIN = 50;
 const PREVIEW_ZOOM_MAX = 200;
 const PREVIEW_ZOOM_STEP = 10;
 const PREVIEW_PAGE_WIDTH = 794;
+const DEFAULT_MARKDOWN_TEXT_FILE_NAME = "Markdown文字.md";
 const IMPORT_QUALITY_JPEG_MAP = {
   1: 0.58,
   2: 0.68,
@@ -177,6 +178,23 @@ function clampPreviewZoom(value) {
 
 function getImportJpegQuality(level) {
   return IMPORT_QUALITY_JPEG_MAP[level] || IMPORT_QUALITY_JPEG_MAP[3];
+}
+
+function normalizeMarkdownTextFileName(value) {
+  const trimmed = String(value || "").trim();
+  const baseName = trimmed || DEFAULT_MARKDOWN_TEXT_FILE_NAME;
+  return /\.(md|markdown|mkd|mkdn)$/i.test(baseName) ? baseName : `${baseName}.md`;
+}
+
+function createMarkdownTextFile(fileName, content) {
+  if (typeof File !== "function") {
+    throw new Error("File constructor is not available in this WebView");
+  }
+
+  return new File([content], normalizeMarkdownTextFileName(fileName), {
+    type: "text/markdown",
+    lastModified: Date.now(),
+  });
 }
 
 function buildImportSnapshotHtml(cssText, rootHtml, zoomLevel) {
@@ -329,6 +347,7 @@ function DocumentImportPage() {
   ensureEnginesInitialized();
   const navigate = useNavigate();
   const [step, setStep] = useState("select");
+  const [sourceMode, setSourceMode] = useState("file");
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [documents, setDocuments] = useState([]);
   const [isConverting, setIsConverting] = useState(false);
@@ -374,6 +393,9 @@ function DocumentImportPage() {
   const [previewZoomTouched, setPreviewZoomTouched] = useState(false);
   const [engineSelections, setEngineSelections] = useState({});
   const [enginePopupOpen, setEnginePopupOpen] = useState(false);
+  const [markdownTextFileName, setMarkdownTextFileName] = useState(DEFAULT_MARKDOWN_TEXT_FILE_NAME);
+  const [markdownTextContent, setMarkdownTextContent] = useState("");
+  const [markdownTextError, setMarkdownTextError] = useState("");
   const [previewBaseSize, setPreviewBaseSize] = useState({
     width: 0,
     height: 0,
@@ -425,6 +447,7 @@ function DocumentImportPage() {
   });
   const canStartConversion = selectedFiles.length > 0 && !isConverting;
   const canImportToMN = previewModel.totalContentSections > 0 && !isSaving;
+  const canAddMarkdownText = markdownTextContent.trim().length > 0 && !isConverting;
   const fontRegistry = useMemo(
     () => buildFontRegistry(exportConfig.fonts),
     [exportConfig.fonts],
@@ -798,8 +821,25 @@ function DocumentImportPage() {
       return;
     }
 
+    setMarkdownTextError("");
     const { mergedFiles } = mergeUniqueFiles(selectedFiles, incomingFiles);
     syncFiles(mergedFiles);
+  }
+
+  function addMarkdownTextToQueue() {
+    if (!canAddMarkdownText) {
+      return;
+    }
+
+    try {
+      const markdownFile = createMarkdownTextFile(markdownTextFileName, markdownTextContent);
+      appendFiles([markdownFile]);
+      setMarkdownTextContent("");
+      setMarkdownTextFileName(DEFAULT_MARKDOWN_TEXT_FILE_NAME);
+      setSourceMode("file");
+    } catch (error) {
+      setMarkdownTextError(`Markdown文字添加失败: ${error && error.message ? error.message : String(error)}`);
+    }
   }
 
   function onFileChange(event) {
@@ -1548,26 +1588,86 @@ function DocumentImportPage() {
           <section className="surface">
             <div className="section-head">
               <div>
-                <h2>准备文件</h2>
+                <h2>添加内容</h2>
               </div>
-              <span className="count-badge">{selectedFiles.length}个文件</span>
+              <span className="count-badge">{selectedFiles.length}项内容</span>
             </div>
 
-            <label
-              htmlFor="file-input"
-              className="upload-dropzone"
-              onDrop={onDrop}
-              onDragOver={onDragOver}
-            >
-              <input
-                id="file-input"
-                type="file"
-                multiple
-                onChange={onFileChange}
-              />
-              <span className="dropzone-title">点击选择或拖入文件</span>
-              <small>Office、EPUB、代码、图片、Markdown、HTML...</small>
-            </label>
+            <div className="source-segmented" role="group" aria-label="选择导入来源">
+              <button
+                type="button"
+                className={`source-segmented-button${sourceMode === "file" ? " source-segmented-button-active" : ""}`}
+                onClick={() => setSourceMode("file")}
+                aria-pressed={sourceMode === "file"}
+              >
+                文件
+              </button>
+              <button
+                type="button"
+                className={`source-segmented-button${sourceMode === "markdown" ? " source-segmented-button-active" : ""}`}
+                onClick={() => setSourceMode("markdown")}
+                aria-pressed={sourceMode === "markdown"}
+              >
+                Markdown文字
+              </button>
+            </div>
+
+            {sourceMode === "file" ? (
+              <label
+                htmlFor="file-input"
+                className="upload-dropzone"
+                onDrop={onDrop}
+                onDragOver={onDragOver}
+              >
+                <input
+                  id="file-input"
+                  type="file"
+                  multiple
+                  onChange={onFileChange}
+                />
+                <span className="dropzone-title">点击选择或拖入文件</span>
+                <small>Office、EPUB、代码、图片、Markdown、HTML...</small>
+              </label>
+            ) : (
+              <div className="markdown-source-panel">
+                <label className="markdown-title-field">
+                  <span>文件名</span>
+                  <input
+                    type="text"
+                    value={markdownTextFileName}
+                    onChange={(event) => {
+                      setMarkdownTextFileName(event.target.value);
+                      setMarkdownTextError("");
+                    }}
+                    disabled={isConverting}
+                  />
+                </label>
+
+                <textarea
+                  className="markdown-textarea"
+                  value={markdownTextContent}
+                  onChange={(event) => {
+                    setMarkdownTextContent(event.target.value);
+                    setMarkdownTextError("");
+                  }}
+                  placeholder="输入Markdown正文"
+                  disabled={isConverting}
+                />
+
+                <div className="markdown-source-actions">
+                  <button
+                    type="button"
+                    className="button button-primary"
+                    onClick={addMarkdownTextToQueue}
+                    disabled={!canAddMarkdownText}
+                  >
+                    添加到队列
+                  </button>
+                </div>
+
+                {markdownTextError ? <p className="error-text">{markdownTextError}</p> : null}
+              </div>
+            )}
 
             <FileQueue
               files={selectedFiles}

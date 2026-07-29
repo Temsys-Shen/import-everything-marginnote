@@ -1,20 +1,28 @@
 import { useState, useCallback, useEffect } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import PageTopbar from "../components/PageTopbar";
 import {
-  parseInput,
+  resolveBilibiliInput,
   fetchVideoInfo,
   fetchUserCollections,
-  fetchCollectionVideos,
   fetchCollectionVideosAll,
   fetchSeriesVideos,
   fetchFavoriteFolders,
+  fetchCollectedFoldersAll,
   fetchFavoriteFolderVideos,
   fetchFavoriteFolderVideosAll,
   fetchFavoriteFolderInfo,
   expandPages,
   BILI_INPUT_HINT,
 } from "../services/bilibiliApiService";
+import {
+  buildSelectedVideoKeys,
+  buildVideoImportItem,
+  expandVideoListWithPages,
+  getVideoTitle,
+  normalizeFavoriteVideo,
+  videoItemKey,
+} from "../services/bilibiliVideoListService";
 import { importVideos } from "../services/bilibiliImportService";
 import { completeImportWithNotice } from "../services/exportConfigService";
 
@@ -23,39 +31,6 @@ function fmtDuration(sec) {
   const m = Math.floor(sec / 60);
   const s = sec % 60;
   return m > 0 ? `${m}:${String(s).padStart(2, "0")}` : `0:${String(s).padStart(2, "0")}`;
-}
-
-function getVideoTitle(video) {
-  if (!video) {
-    return "";
-  }
-  const candidates = [
-    video.title,
-    video.name,
-    video.archive_title,
-    video.page_title,
-    video.show_title,
-  ];
-  for (const candidate of candidates) {
-    const title = String(candidate || "").trim();
-    if (title && title.toLowerCase() !== "bilibili") {
-      return title;
-    }
-  }
-  return "";
-}
-
-function requireVideoTitle(video) {
-  const title = getVideoTitle(video);
-  if (!title) {
-    throw new Error(`视频缺少标题: ${video && video.bvid ? video.bvid : "unknown"}`);
-  }
-  return title;
-}
-
-function videoItemKey(video) {
-  if (video.page && video.page > 1) return video.bvid + "-p" + video.page;
-  return video.bvid;
 }
 
 function VideoRow({ video, checked, onToggle }) {
@@ -93,6 +68,22 @@ function buildImportSuccessMessage(result) {
     return `B站视频导入完成，共导入${imported}个视频`;
   }
   return "B站视频导入完成";
+}
+
+function collectionItemId(item) {
+  return item?.season_id || item?.series_id || item?.id || item?.media_id || item?.meta?.season_id || item?.meta?.series_id;
+}
+
+function collectionItemName(item) {
+  return item?.name || item?.title || item?.cover?.title || item?.meta?.name || item?.meta?.title || "";
+}
+
+function collectionItemCover(item) {
+  return item?.cover?.url || item?.cover || item?.new_cover_url || item?.meta?.cover || "";
+}
+
+function collectionItemCount(item) {
+  return item?.total || item?.media_count || item?.count || item?.meta?.total || 0;
 }
 
 export default function BilibiliImportPage() {
@@ -137,29 +128,43 @@ export default function BilibiliImportPage() {
     go("input");
   }
 
-  function handleParse() {
-    const p = parseInput(input);
-    setInputType(p.type);
-    setParsedValue(p.value);
-    setParsedPage(p.page || 1);
+  async function handleParse() {
+    setLoading(true);
+    setError("");
+    try {
+      const p = await resolveBilibiliInput(input);
+      setInputType(p.type);
+      setParsedValue(p.value);
+      setParsedPage(p.page || 1);
 
-    if (p.type === "unknown" || p.type === "empty") {
-      setError("无法识别的输入，请检查格式");
-      return;
-    }
+      if (p.type === "unknown" || p.type === "empty") {
+        setError("无法识别的输入，请检查格式");
+        return;
+      }
+      if (p.type === "unsupported") {
+        setError(p.message || "不支持该类型B站链接");
+        return;
+      }
 
-    if (p.type === "bvid") {
-      loadSingleVideo({ bvid: p.value, page: p.page || 1 });
-    } else if (p.type === "avid") {
-      loadSingleVideo({ avid: p.value, page: p.page || 1 });
-    } else if (p.type === "mid") {
-      loadUserBrowse(p.value);
-    } else if (p.type === "season") {
-      loadCollectionVideos({ season_id: p.value, mid: p.mid, name: "B站合集" });
-    } else if (p.type === "series") {
-      loadSeriesVideos({ series_id: p.value, mid: p.mid, name: "B站系列" });
-    } else if (p.type === "favorite") {
-      loadFavoriteVideos(p.value);
+      if (p.type === "bvid") {
+        await loadSingleVideo({ bvid: p.value, page: p.page || 1 });
+      } else if (p.type === "avid") {
+        await loadSingleVideo({ avid: p.value, page: p.page || 1 });
+      } else if (p.type === "mid") {
+        await loadUserBrowse(p.value);
+      } else if (p.type === "season") {
+        await loadCollectionVideos({ season_id: p.value, mid: p.mid, name: "B站合集" });
+      } else if (p.type === "series") {
+        await loadSeriesVideos({ series_id: p.value, mid: p.mid, name: "B站系列" });
+      } else if (p.type === "favorite") {
+        await loadFavoriteVideos(p.value);
+      } else if (p.type === "collected-season") {
+        await loadCollectedSeasonVideos(p.value, p.mid);
+      }
+    } catch (e) {
+      setError(e?.message || String(e));
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -174,10 +179,10 @@ export default function BilibiliImportPage() {
       if (expanded.length > 1) {
         setContainerInfo({ type: "multi-p", label: data.title || "多P视频", id: bvid });
         setVideos(expanded);
-        setSelectedBvids(new Set(expanded.map((v) => v.bvid)));
+        setSelectedBvids(buildSelectedVideoKeys(expanded));
         go("videolist");
       } else {
-        setSingleVideo(data);
+        setSingleVideo(expanded[0]);
         go("preview");
       }
     } catch (e) {
@@ -218,10 +223,16 @@ export default function BilibiliImportPage() {
     setLoading(true);
     setError("");
     try {
-      setContainerInfo({ type: "seasons", label: season.name, id: season.season_id });
-      const list = await fetchCollectionVideosAll(season.season_id, season.mid);
-      setVideos(list);
-      setSelectedBvids(new Set(list.map((v) => v.bvid)));
+      const seasonId = season.season_id || season.meta?.season_id;
+      const mid = season.mid || season.meta?.mid;
+      if (!seasonId || !mid) {
+        throw new Error("B站合集缺少season_id或mid");
+      }
+      setContainerInfo({ type: "seasons", label: collectionItemName(season) || "B站合集", id: seasonId });
+      const list = await fetchCollectionVideosAll(seasonId, mid);
+      const expanded = await expandVideoListWithPages(list);
+      setVideos(expanded);
+      setSelectedBvids(buildSelectedVideoKeys(expanded));
       go("videolist");
     } catch (e) {
       setError(e?.message || String(e));
@@ -234,11 +245,17 @@ export default function BilibiliImportPage() {
     setLoading(true);
     setError("");
     try {
-      setContainerInfo({ type: "series", label: item.name || item.title, id: item.series_id });
-      const data = await fetchSeriesVideos(item.series_id, item.mid);
+      const seriesId = item.series_id || item.meta?.series_id;
+      const mid = item.mid || item.meta?.mid;
+      if (!seriesId || !mid) {
+        throw new Error("B站系列缺少series_id或mid");
+      }
+      setContainerInfo({ type: "series", label: collectionItemName(item) || "B站系列", id: seriesId });
+      const data = await fetchSeriesVideos(seriesId, mid);
       const list = data?.archives || [];
-      setVideos(list);
-      setSelectedBvids(new Set(list.map((v) => v.bvid)));
+      const expanded = await expandVideoListWithPages(list);
+      setVideos(expanded);
+      setSelectedBvids(buildSelectedVideoKeys(expanded));
       go("videolist");
     } catch (e) {
       setError(e?.message || String(e));
@@ -260,17 +277,44 @@ export default function BilibiliImportPage() {
       }
       setContainerInfo({ type: "favorite", label, id: mediaId });
       const medias = await fetchFavoriteFolderVideosAll(mediaId);
-      const list = medias.map((m) => ({
-        aid: m.id,
-        bvid: m.bvid,
-        title: m.title,
-        pic: m.cover,
-        duration: m.duration,
-        owner: m.upper ? { name: m.upper.name, mid: m.upper.mid } : null,
-      }));
-      setVideos(list);
-      setSelectedBvids(new Set(list.map((v) => v.bvid)));
+      const list = medias.map((m) => normalizeFavoriteVideo(m));
+      const expanded = await expandVideoListWithPages(list);
+      setVideos(expanded);
+      setSelectedBvids(buildSelectedVideoKeys(expanded));
       go("videolist");
+    } catch (e) {
+      setError(e?.message || String(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadCollectedSeasonVideos(seasonId, collectorMid) {
+    setLoading(true);
+    setError("");
+    try {
+      if (!seasonId || !collectorMid) {
+        throw new Error("B站收藏合集缺少season_id或收藏者mid");
+      }
+      const folders = await fetchCollectedFoldersAll(collectorMid);
+      const target = folders.find((item) => String(item.id) === String(seasonId));
+      if (!target) {
+        throw new Error(`未找到收藏的视频合集: ${seasonId}`);
+      }
+      if (Number(target.type) !== 21) {
+        throw new Error(`收藏内容不是视频合集: ${seasonId}`);
+      }
+      const ownerMid = target.mid || target.upper?.mid;
+      if (!ownerMid) {
+        throw new Error(`B站收藏合集缺少作者mid: ${seasonId}`);
+      }
+      await loadCollectionVideos({
+        season_id: seasonId,
+        mid: ownerMid,
+        name: target.title || "B站收藏合集",
+        cover: target.cover || "",
+        total: target.media_count || 0,
+      });
     } catch (e) {
       setError(e?.message || String(e));
     } finally {
@@ -291,20 +335,8 @@ export default function BilibiliImportPage() {
     if (selectedBvids.size === videos.length) {
       setSelectedBvids(new Set());
     } else {
-      setSelectedBvids(new Set(videos.map((v) => videoItemKey(v))));
+      setSelectedBvids(buildSelectedVideoKeys(videos));
     }
-  }
-
-  function buildVideoImportItem(v) {
-    const title = v.part ? `${requireVideoTitle(v)} - ${v.part}` : requireVideoTitle(v);
-    return {
-      bvid: v.bvid,
-      title,
-      duration: String(v.duration || ""),
-      thumbnail: v.pic || v.thumbnail || "",
-      page: v.page || 1,
-      cid: v.cid || null,
-    };
   }
 
   useEffect(() => {
@@ -450,10 +482,10 @@ export default function BilibiliImportPage() {
 
           <div className="bili-collection-list">
             {list.map((item) => {
-              const id = item.season_id || item.series_id || item.id;
-              const name = item.name || item.title || item.cover?.title || "";
-              const cover = item.cover?.url || item.cover || item.new_cover_url || "";
-              const count = item.total || item.media_count || item.count || 0;
+              const id = collectionItemId(item);
+              const name = collectionItemName(item);
+              const cover = collectionItemCover(item);
+              const count = collectionItemCount(item);
               return (
                 <button
                   key={id}

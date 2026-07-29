@@ -2,47 +2,36 @@ import { describe, expect, it, vi, beforeAll } from "vitest";
 import { compressImage, blobToBase64 } from "./imageUtils";
 
 beforeAll(() => {
-  if (typeof createImageBitmap === "undefined") {
-    vi.stubGlobal("createImageBitmap", async (blob) => ({
-      width: 100,
-      height: 100,
-      close: () => {},
+  vi.stubGlobal("createImageBitmap", async () => ({
+    width: 100,
+    height: 100,
+    close: () => {},
+  }));
+
+  if (typeof HTMLCanvasElement !== "undefined") {
+    HTMLCanvasElement.prototype.getContext = vi.fn(() => ({
+      drawImage: vi.fn(),
     }));
-  }
-
-  if (typeof document === "undefined") {
-    const canvas = {
-      width: 0,
-      height: 0,
-      getContext: () => ({
-        drawImage: () => {},
-      }),
-      toBlob: (cb, type) => {
-        const blob = new Blob(["fake-image"], { type: type || "image/png" });
-        cb(blob);
-      },
-    };
-    vi.stubGlobal("document", {
-      createElement: () => canvas,
+    HTMLCanvasElement.prototype.toBlob = vi.fn((cb, type) => {
+      const blob = new Blob(["fake-image"], { type: type || "image/png" });
+      cb(blob);
     });
   }
 
-  if (typeof Image === "undefined") {
-    vi.stubGlobal("Image", class {
-      constructor() {
-        this.naturalWidth = 200;
-        this.naturalHeight = 150;
-        this.onload = null;
-        this.onerror = null;
-        this._src = "";
-      }
-      set src(value) {
-        this._src = value;
-        if (this.onload) this.onload();
-      }
-      get src() { return this._src; }
-    });
-  }
+  vi.stubGlobal("Image", class {
+    constructor() {
+      this.naturalWidth = 200;
+      this.naturalHeight = 150;
+      this.onload = null;
+      this.onerror = null;
+      this._src = "";
+    }
+    set src(value) {
+      this._src = value;
+      if (this.onload) this.onload();
+    }
+    get src() { return this._src; }
+  });
 
   if (typeof FileReader === "undefined") {
     const btoa = (str) => Buffer.from(str, "binary").toString("base64");
