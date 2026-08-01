@@ -15,9 +15,9 @@ function ModeSelectPage() {
         <span className="entry-arrow" aria-hidden="true">➔</span>
       </Link>
 
-      <Link className="entry-card bili-entry" to="/bilibili">
+      <Link className="entry-card bili-entry" to="/video">
         <span className="icon-wrapper" aria-hidden="true">▶️</span>
-        <strong className="entry-title">B站视频</strong>
+        <strong className="entry-title">导入视频</strong>
         <span className="entry-arrow" aria-hidden="true">➔</span>
       </Link>
     </div>

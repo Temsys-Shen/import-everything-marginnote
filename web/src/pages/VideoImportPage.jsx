@@ -16,6 +16,12 @@ import {
   BILI_INPUT_HINT,
 } from "../services/bilibiliApiService";
 import {
+  isYouTubeInput,
+  parseYouTubeInput,
+  fetchYouTubeVideoInfo,
+  fetchYouTubePlaylistVideos,
+} from "../services/youtubeApiService";
+import {
   buildSelectedVideoKeys,
   buildVideoImportItem,
   expandVideoListWithPages,
@@ -62,12 +68,12 @@ function buildImportSuccessMessage(result) {
   const total = Number(result && result.total ? result.total : 0);
   const errors = Array.isArray(result && result.errors) ? result.errors.length : 0;
   if (errors > 0) {
-    return `B站视频导入完成，成功${imported}个，失败${errors}个`;
+    return `视频导入完成，成功${imported}个，失败${errors}个`;
   }
   if (total > 0) {
-    return `B站视频导入完成，共导入${imported}个视频`;
+    return `视频导入完成，共导入${imported}个视频`;
   }
-  return "B站视频导入完成";
+  return "视频导入完成";
 }
 
 function collectionItemId(item) {
@@ -86,7 +92,7 @@ function collectionItemCount(item) {
   return item?.total || item?.media_count || item?.count || item?.meta?.total || 0;
 }
 
-export default function BilibiliImportPage() {
+export default function VideoImportPage() {
   const navigate = useNavigate();
 
   const [step, setStep] = useState("input");
@@ -132,6 +138,20 @@ export default function BilibiliImportPage() {
     setLoading(true);
     setError("");
     try {
+      if (isYouTubeInput(input)) {
+        const p = parseYouTubeInput(input);
+        if (p.type === "empty" || p.type === "unknown") {
+          setError("无法识别的YouTube链接，请检查格式");
+          return;
+        }
+        if (p.type === "video") {
+          await loadYouTubeSingleVideo(p.videoId);
+        } else if (p.type === "playlist") {
+          await loadYouTubePlaylistVideos(p.playlistId);
+        }
+        return;
+      }
+
       const p = await resolveBilibiliInput(input);
       setInputType(p.type);
       setParsedValue(p.value);
@@ -185,6 +205,58 @@ export default function BilibiliImportPage() {
         setSingleVideo(expanded[0]);
         go("preview");
       }
+    } catch (e) {
+      setError(e?.message || String(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadYouTubeSingleVideo(videoId) {
+    setLoading(true);
+    setError("");
+    try {
+      const info = await fetchYouTubeVideoInfo(videoId);
+      const video = {
+        platform: "youtube",
+        videoId: info.videoId,
+        title: info.title,
+        duration: info.duration,
+        pic: info.thumbnail,
+        owner: info.author ? { name: info.author } : null,
+        stat: null,
+      };
+      setSingleVideo(video);
+      go("preview");
+    } catch (e) {
+      setError(e?.message || String(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadYouTubePlaylistVideos(playlistId) {
+    setLoading(true);
+    setError("");
+    try {
+      const data = await fetchYouTubePlaylistVideos(playlistId);
+      const videos = data.videos.map((item) => ({
+        platform: "youtube",
+        videoId: item.videoId,
+        title: item.title,
+        duration: item.duration,
+        pic: item.thumbnail,
+        owner: item.owner ? { name: item.owner } : null,
+        stat: null,
+      }));
+      setContainerInfo({
+        type: "youtube-playlist",
+        label: data.title || "YouTube播放列表",
+        id: playlistId,
+      });
+      setVideos(videos);
+      setSelectedBvids(buildSelectedVideoKeys(videos));
+      go("videolist");
     } catch (e) {
       setError(e?.message || String(e));
     } finally {
@@ -382,13 +454,13 @@ export default function BilibiliImportPage() {
         <div className="surface">
           <div className="section-head">
             <div>
-              <h2>B站视频导入</h2>
-              <p>{BILI_INPUT_HINT}</p>
+              <h2>视频导入</h2>
+              <p>{BILI_INPUT_HINT} / YouTube 视频或播放列表链接</p>
             </div>
           </div>
           <input
             className="text-input bili-input"
-            placeholder="粘贴 BVID / av号 / 链接 / MID …"
+            placeholder="粘贴 BVID / av号 / B站链接 / MID / YouTube链接 …"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleParse()}
@@ -632,7 +704,7 @@ export default function BilibiliImportPage() {
               <p className="warning-summary"><span>失败详情</span></p>
               <ul className="warning-list">
                 {errs.map((e, i) => (
-                  <li key={i}>{e.title || e.bvid}: {e.error}</li>
+                  <li key={i}>{e.title || e.bvid || e.videoId}: {e.error}</li>
                 ))}
               </ul>
             </div>
@@ -654,7 +726,7 @@ export default function BilibiliImportPage() {
 
   // ──────── render root ────────
   const pageTitle = {
-    input: "B站视频导入",
+    input: "视频导入",
     preview: "预览视频",
     browse: "用户合集",
     videolist: "选择视频",

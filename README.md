@@ -7,7 +7,7 @@
 
 ## What it does
 
-导入一或多个文档渲染为html，再截图成pdf导入到MarginNote，并可自定义样式。同时也支持导入多种类型的脑图到MN的脑图。
+导入一或多个文档渲染为html，再截图成pdf导入到MarginNote，并可自定义样式。同时也支持导入多种类型的脑图到MN的脑图，以及导入B站/YouTube视频（以视频链接的形式）。
 
 ## Supported files
 
@@ -27,6 +27,11 @@
 ### Mindmaps
 
 XMind、Markdown、OPML、FreeMind(.mm)、MindManager(.mmap/.xmmap)、iThoughts(.itmz)、SimpleMind(.smmx)
+
+### Videos
+
+- B站: BV/av 单视频、UP空间合集/系列、收藏夹
+- YouTube: 单视频链接(watch/shorts/youtu.be/live)、播放列表(逐条导入)
 
 ## Development
 

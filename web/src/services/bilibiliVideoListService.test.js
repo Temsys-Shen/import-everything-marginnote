@@ -67,12 +67,30 @@ describe("bilibili video list helpers", () => {
       duration: 22,
       pic: "cover.jpg",
     })).toEqual({
+      platform: "bilibili",
       bvid: "BV1GJ411x7h7",
       title: "课程 - 第二节",
       duration: "22",
       thumbnail: "cover.jpg",
       page: 2,
       cid: 102,
+    });
+  });
+
+  it("builds youtube import items and keys from videoId", () => {
+    expect(videoItemKey({ platform: "youtube", videoId: "dQw4w9WgXcQ" })).toBe("yt-dQw4w9WgXcQ");
+    expect(buildVideoImportItem({
+      platform: "youtube",
+      videoId: "dQw4w9WgXcQ",
+      title: "Never Gonna Give You Up",
+      duration: 213,
+      pic: "cover.jpg",
+    })).toEqual({
+      platform: "youtube",
+      videoId: "dQw4w9WgXcQ",
+      title: "Never Gonna Give You Up",
+      duration: "213",
+      thumbnail: "cover.jpg",
     });
   });
 

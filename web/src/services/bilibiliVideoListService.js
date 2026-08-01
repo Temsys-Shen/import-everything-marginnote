@@ -29,6 +29,9 @@ export function requireVideoTitle(video) {
 }
 
 export function videoItemKey(video) {
+  if (video && video.platform === "youtube") {
+    return video.videoId ? "yt-" + video.videoId : "";
+  }
   if (video && video.page && video.page > 1) return video.bvid + "-p" + video.page;
   return video ? video.bvid : "";
 }
@@ -38,8 +41,18 @@ export function buildSelectedVideoKeys(videos) {
 }
 
 export function buildVideoImportItem(video) {
+  if (video && video.platform === "youtube") {
+    return {
+      platform: "youtube",
+      videoId: video.videoId,
+      title: requireVideoTitle(video),
+      duration: String(video.duration || ""),
+      thumbnail: video.pic || video.thumbnail || "",
+    };
+  }
   const title = video.part ? `${requireVideoTitle(video)} - ${video.part}` : requireVideoTitle(video);
   return {
+    platform: "bilibili",
     bvid: video.bvid,
     title,
     duration: String(video.duration || ""),

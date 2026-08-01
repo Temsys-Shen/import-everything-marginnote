@@ -1238,6 +1238,65 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
     });
   }
 
+  function youtubeApiProxy(context, payload) {
+    if (!payload || typeof payload !== "object") {
+      return responseFail("YT_API_INVALID_PAYLOAD", "payload must be an object");
+    }
+    const url = String(payload.url || "").trim();
+    if (!url) {
+      return responseFail("YT_API_INVALID_URL", "URL is required");
+    }
+    const bodyString = String(payload.body || "{}").trim();
+
+    var nsUrl = NSURL.URLWithString(url);
+    var request = NSMutableURLRequest.requestWithURL(nsUrl);
+    request.setHTTPMethod("POST");
+    request.setTimeoutInterval(25);
+    request.setValueForHTTPHeaderField("application/json", "Content-Type");
+    request.setValueForHTTPHeaderField("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36", "User-Agent");
+    var bodyData = NSData.dataWithStringEncoding(bodyString, 4);
+    if (!bodyData) {
+      return responseFail("YT_API_INVALID_BODY", "Failed to encode request body");
+    }
+    request.setHTTPBody(bodyData);
+
+    return new Promise(function (resolve) {
+      NSURLConnection.sendAsynchronousRequestQueueCompletionHandler(
+        request,
+        NSOperationQueue.mainQueue(),
+        function (response, data, error) {
+          if (!isBridgeNil(error)) {
+            var errMsg = "";
+            try {
+              if (!isBridgeNil(error.localizedDescription)) errMsg = String(error.localizedDescription);
+              else if (!isBridgeNil(error.code)) errMsg = "code " + String(error.code);
+              var domain = "";
+              var code = "";
+              if (!isBridgeNil(error.domain)) domain = String(error.domain);
+              if (!isBridgeNil(error.code)) code = String(error.code);
+              errMsg = errMsg + " (" + domain + " " + code + ")";
+            } catch (e2) {}
+            resolve(responseFail("YT_API_ERROR", errMsg));
+            return;
+          }
+          if (isBridgeNil(data) || data.length() === 0) {
+            resolve(responseFail("YT_API_EMPTY", "No data received"));
+            return;
+          }
+
+          var httpResponse = response;
+          var statusCode = httpResponse ? httpResponse.statusCode() : 0;
+          var bodyB64 = data.base64Encoding();
+
+          resolve(responseOk("YT_API_OK", "API fetched", {
+            statusCode: statusCode,
+            bodyB64: bodyB64,
+          }));
+        }
+      );
+    });
+  }
+
   function bilibiliResolveUrl(context, payload) {
     if (!payload || typeof payload !== "object") {
       return responseFail("BILI_RESOLVE_INVALID_PAYLOAD", "payload must be an object");
@@ -1298,11 +1357,11 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
     });
   }
 
-  function importBilibiliVideos(context, payload) {
-    validatePayloadObject(payload, "importBilibiliVideos");
+  function importVideosCore(context, payload, config) {
+    validatePayloadObject(payload, config.commandName);
     const videos = payload.videos;
     if (!Array.isArray(videos) || videos.length === 0) {
-      return responseFail("BILI_IMPORT_NO_VIDEOS", "videos array is required");
+      return responseFail(config.noVideosCode, "videos array is required");
     }
 
     var panelWebView = null;
@@ -1320,8 +1379,8 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
       } catch (_) {}
     }
 
-    const biliDir = exportDirectoryPath() + "/BilibiliVideos";
-    ensureDirectory(biliDir);
+    const videosDir = exportDirectoryPath() + "/" + config.dirName;
+    ensureDirectory(videosDir);
     const fm = fileManager();
 
     var imported = 0;
@@ -1331,27 +1390,27 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
 
     for (var i = 0; i < videos.length; i++) {
       var video = videos[i];
-      var bvid = String(video.bvid || "").trim();
-      var title = String(video.title || bvid).trim();
+      var id = config.extractId(video);
+      var title = String(config.extractTitle(video) || id).trim();
       var duration = video.duration ? String(video.duration) : "";
       var thumbnail = video.thumbnail ? String(video.thumbnail) : "";
-      var page = video.page ? String(video.page) : "1";
-      var cid = video.cid ? String(video.cid) : null;
 
-      if (!bvid) {
-        errors.push({ bvid: bvid, title: title, error: "Missing bvid" });
+      if (!id) {
+        errors.push(config.errorItem(id, title, "Missing id"));
         sendProgress(i + 1, videos.length);
         continue;
       }
 
-      var mnvlinkFileName = normalizeMnvlinkFileName(title, bvid);
-      var mnvlinkPath = biliDir + "/" + mnvlinkFileName;
+      var mnvlinkFileName = normalizeMnvlinkFileName(title, id);
+      var mnvlinkPath = videosDir + "/" + mnvlinkFileName;
 
       try {
         if (!fm.fileExistsAtPath(mnvlinkPath)) {
-          var playerUrl = "https://player.bilibili.com/player.html?bvid=" + bvid + "&page=" + page + "&danmaku=0";
-          if (cid) {
-            playerUrl += "&cid=" + cid;
+          var playerUrl = config.buildPlayerUrl(video, id);
+          if (!playerUrl) {
+            errors.push(config.errorItem(id, title, "Failed to build player url"));
+            sendProgress(i + 1, videos.length);
+            continue;
           }
 
           var mnvlinkContent = JSON.stringify({
@@ -1363,13 +1422,13 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
 
           var nsData = NSData.dataWithStringEncoding(mnvlinkContent, 4);
           if (!nsData) {
-            errors.push({ bvid: bvid, title: title, error: "Failed to encode .mnvlink content" });
+            errors.push(config.errorItem(id, title, "Failed to encode .mnvlink content"));
             sendProgress(i + 1, videos.length);
             continue;
           }
           var writeOk = nsData.writeToFileAtomically(mnvlinkPath, true);
           if (!writeOk) {
-            errors.push({ bvid: bvid, title: title, error: "Failed to write .mnvlink file" });
+            errors.push(config.errorItem(id, title, "Failed to write .mnvlink file"));
             sendProgress(i + 1, videos.length);
             continue;
           }
@@ -1378,12 +1437,12 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
         var docMd5 = appInstance().importDocument(mnvlinkPath);
         if (docMd5) {
           imported++;
-          openQueue.push({ bvid: bvid, title: title, docMd5: String(docMd5) });
+          openQueue.push({ id: id, title: title, docMd5: String(docMd5) });
         } else {
-          errors.push({ bvid: bvid, title: title, error: "importDocument returned empty" });
+          errors.push(config.errorItem(id, title, "importDocument returned empty"));
         }
       } catch (e) {
-        errors.push({ bvid: bvid, title: title, error: String(e) });
+        errors.push(config.errorItem(id, title, String(e)));
       }
 
       sendProgress(i + 1, videos.length);
@@ -1391,7 +1450,7 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
 
     return new Promise(function (resolve) {
       function finishImport() {
-        resolve(responseOk("BILI_IMPORT_OK", "Bilibili import complete", {
+        resolve(responseOk(config.okCode, config.okMessage, {
           imported: imported,
           total: videos.length,
           errors: errors,
@@ -1438,6 +1497,60 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
     });
   }
 
+  const bilibiliImportConfig = {
+    commandName: "importBilibiliVideos",
+    dirName: "BilibiliVideos",
+    noVideosCode: "BILI_IMPORT_NO_VIDEOS",
+    okCode: "BILI_IMPORT_OK",
+    okMessage: "Bilibili import complete",
+    extractId: function (video) {
+      return String(video && video.bvid ? video.bvid : "").trim();
+    },
+    extractTitle: function (video) {
+      return video && video.title ? String(video.title) : "";
+    },
+    errorItem: function (id, title, error) {
+      return { bvid: id, title: title, error: error };
+    },
+    buildPlayerUrl: function (video, bvid) {
+      var page = video && video.page ? String(video.page) : "1";
+      var cid = video && video.cid ? String(video.cid) : null;
+      var playerUrl = "https://player.bilibili.com/player.html?bvid=" + bvid + "&page=" + page + "&danmaku=0";
+      if (cid) {
+        playerUrl += "&cid=" + cid;
+      }
+      return playerUrl;
+    },
+  };
+
+  function importBilibiliVideos(context, payload) {
+    return importVideosCore(context, payload, bilibiliImportConfig);
+  }
+
+  const youtubeImportConfig = {
+    commandName: "importYouTubeVideos",
+    dirName: "YouTubeVideos",
+    noVideosCode: "YT_IMPORT_NO_VIDEOS",
+    okCode: "YT_IMPORT_OK",
+    okMessage: "YouTube import complete",
+    extractId: function (video) {
+      return String(video && video.videoId ? video.videoId : "").trim();
+    },
+    extractTitle: function (video) {
+      return video && video.title ? String(video.title) : "";
+    },
+    errorItem: function (id, title, error) {
+      return { videoId: id, title: title, error: error };
+    },
+    buildPlayerUrl: function (video, videoId) {
+      return "https://www.youtube.com/watch?v=" + videoId;
+    },
+  };
+
+  function importYouTubeVideos(context, payload) {
+    return importVideosCore(context, payload, youtubeImportConfig);
+  }
+
   const commands = {
     ping: wrapCommand("ping", ping),
     echo: wrapCommand("echo", echo),
@@ -1465,7 +1578,9 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
     savePdfAbort: wrapCommand("savePdfAbort", savePdfAbort),
     bilibiliApiProxy: bilibiliApiProxy,
     bilibiliResolveUrl: bilibiliResolveUrl,
+    youtubeApiProxy: youtubeApiProxy,
     importBilibiliVideos: importBilibiliVideos,
+    importYouTubeVideos: importYouTubeVideos,
     fetchImageForExport: fetchImageForExport,
     captureHtmlAsPdf: captureHtmlAsPdf,
     captureHtmlPdfPage: captureHtmlPdfPage,

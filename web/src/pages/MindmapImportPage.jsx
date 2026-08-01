@@ -15,6 +15,24 @@ import {
 } from "../services/mindmapImportService";
 
 const MINDMAP_IMPORT_POLL_MS = 120;
+const DEFAULT_MARKDOWN_MINDMAP_FILE_NAME = "Markdown脑图.md";
+
+function normalizeMarkdownMindmapFileName(value) {
+  const trimmed = String(value || "").trim();
+  const baseName = trimmed || DEFAULT_MARKDOWN_MINDMAP_FILE_NAME;
+  return /\.(md|markdown|mkd|mkdn)$/i.test(baseName) ? baseName : `${baseName}.md`;
+}
+
+function createMarkdownMindmapFile(fileName, content) {
+  if (typeof File !== "function") {
+    throw new Error("File constructor is not available in this WebView");
+  }
+
+  return new File([content], normalizeMarkdownMindmapFileName(fileName), {
+    type: "text/markdown",
+    lastModified: Date.now(),
+  });
+}
 
 function buildImportSuccessText(result) {
   const count = Number(result && result.createdCount ? result.createdCount : 0);
@@ -35,6 +53,10 @@ function MindmapImportPage() {
   const navigate = useNavigate();
   const sheetPickerRef = useRef(null);
   const [step, setStep] = useState("select");
+  const [sourceMode, setSourceMode] = useState("file");
+  const [markdownTextFileName, setMarkdownTextFileName] = useState(DEFAULT_MARKDOWN_MINDMAP_FILE_NAME);
+  const [markdownTextContent, setMarkdownTextContent] = useState("");
+  const [markdownTextError, setMarkdownTextError] = useState("");
   const [contextState, setContextState] = useState({
     loading: true,
     error: "",
@@ -233,6 +255,21 @@ function MindmapImportPage() {
     event.target.value = "";
   }
 
+  function submitMarkdownText() {
+    setMarkdownTextError("");
+    if (!markdownTextContent.trim()) {
+      setMarkdownTextError("请输入Markdown正文");
+      return;
+    }
+
+    try {
+      const file = createMarkdownMindmapFile(markdownTextFileName, markdownTextContent);
+      void handleFileSelection(file);
+    } catch (error) {
+      setMarkdownTextError(`Markdown脑图解析失败: ${error && error.message ? error.message : String(error)}`);
+    }
+  }
+
   function onDrop(event) {
     event.preventDefault();
     const file = event.dataTransfer.files && event.dataTransfer.files[0] ? event.dataTransfer.files[0] : null;
@@ -400,15 +437,73 @@ function MindmapImportPage() {
           <section className="surface">
             <div className="section-head">
               <div>
-                <h2>选择脑图文件</h2>
+                <h2>选择脑图来源</h2>
               </div>
             </div>
 
-            <label className="upload-dropzone mindmap-dropzone" onDrop={onDrop} onDragOver={onDragOver}>
-              <input type="file" onChange={onFileChange} />
-              <span className="dropzone-title">点击选择或拖入脑图文件</span>
-              <small>XMind、Markdown、OPML、FreeMind(.mm)、MindManager(.mmap/.xmmap)、iThoughts(.itmz)、SimpleMind(.smmx)</small>
-            </label>
+            <div className="source-segmented" role="group" aria-label="选择导入来源">
+              <button
+                type="button"
+                className={`source-segmented-button${sourceMode === "file" ? " source-segmented-button-active" : ""}`}
+                onClick={() => setSourceMode("file")}
+                aria-pressed={sourceMode === "file"}
+              >
+                文件
+              </button>
+              <button
+                type="button"
+                className={`source-segmented-button${sourceMode === "markdown" ? " source-segmented-button-active" : ""}`}
+                onClick={() => setSourceMode("markdown")}
+                aria-pressed={sourceMode === "markdown"}
+              >
+                Markdown文字
+              </button>
+            </div>
+
+            {sourceMode === "file" ? (
+              <label className="upload-dropzone mindmap-dropzone" onDrop={onDrop} onDragOver={onDragOver}>
+                <input type="file" onChange={onFileChange} />
+                <span className="dropzone-title">点击选择或拖入脑图文件</span>
+                <small>XMind、Markdown、OPML、FreeMind(.mm)、MindManager(.mmap/.xmmap)、iThoughts(.itmz)、SimpleMind(.smmx)</small>
+              </label>
+            ) : (
+              <div className="markdown-source-panel">
+                <label className="markdown-title-field">
+                  <span>文件名</span>
+                  <input
+                    type="text"
+                    value={markdownTextFileName}
+                    onChange={(event) => {
+                      setMarkdownTextFileName(event.target.value);
+                      setMarkdownTextError("");
+                    }}
+                  />
+                </label>
+
+                <textarea
+                  className="markdown-textarea"
+                  value={markdownTextContent}
+                  onChange={(event) => {
+                    setMarkdownTextContent(event.target.value);
+                    setMarkdownTextError("");
+                  }}
+                  placeholder="输入Markdown正文（标题层级将生成脑图节点）"
+                />
+
+                <div className="markdown-source-actions">
+                  <button
+                    type="button"
+                    className="button button-primary"
+                    onClick={submitMarkdownText}
+                    disabled={!markdownTextContent.trim()}
+                  >
+                    解析为脑图
+                  </button>
+                </div>
+
+                {markdownTextError ? <p className="error-text">{markdownTextError}</p> : null}
+              </div>
+            )}
 
             {contextState.loading ? <p className="muted-text">正在读取导入上下文…</p> : null}
             {parseState.loading ? <p className="muted-text">正在解析脑图结构…</p> : null}
