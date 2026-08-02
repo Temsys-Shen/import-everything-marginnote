@@ -21,7 +21,7 @@ export async function parseEpubFile(file, context = {}) {
   try {
     const { onProgress } = context;
     const arrayBuffer = await readAsArrayBuffer(file);
-    const book = ePub(arrayBuffer);
+    const book = ePub(arrayBuffer, { replacements: "base64" });
 
     await book.ready;
     const [navigation] = await Promise.all([book.loaded.navigation, book.loaded.spine]);

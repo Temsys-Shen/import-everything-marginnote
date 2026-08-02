@@ -932,12 +932,22 @@ function DocumentImportPage() {
     }
   }
 
-  function waitForImages(container) {
+  function waitForImages(container, timeoutMs = 5000) {
     const imgs = Array.from(container.querySelectorAll("img"));
     if (imgs.length === 0) return;
     return Promise.all(imgs.map(img => {
-      if (img.complete && img.naturalWidth > 0) return;
-      return new Promise(resolve => { img.onload = img.onerror = resolve; });
+      if (img.complete) return;
+      return new Promise(resolve => {
+        const done = () => {
+          img.onload = null;
+          img.onerror = null;
+          clearTimeout(timer);
+          resolve();
+        };
+        const timer = setTimeout(done, timeoutMs);
+        img.onload = done;
+        img.onerror = done;
+      });
     }));
   }
 
