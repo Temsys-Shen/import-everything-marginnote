@@ -8,7 +8,7 @@ export async function parseImageFile(file) {
       sections: [
         {
           title: file.name,
-          html: `<figure class="image-figure"><img src="${objectURL}" alt="${escapeHtml(file.name)}" /><figcaption>${escapeHtml(file.name)}</figcaption></figure>`,
+          html: `<figure class="image-figure"><img src="${objectURL}" alt="${escapeHtml(file.name)}" /></figure>`,
           pageBreakBefore: true,
         },
       ],

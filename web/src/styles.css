@@ -1868,12 +1868,6 @@ ol {
   border-radius: 8px;
 }
 
-.image-figure figcaption {
-  margin-top: 4px;
-  color: var(--muted);
-  font-size: 12px;
-}
-
 .slide-images {
   display: grid;
   gap: 8px;

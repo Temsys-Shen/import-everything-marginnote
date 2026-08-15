@@ -140,6 +140,7 @@ export function detectSourceType(file) {
   if (extension === "csv") return "csv";
   if (extension === "pptx") return "pptx";
   if (extension === "ppt") return "ppt";
+  if (extension === "pdf") return "pdf";
   if (extension === "rtf") return "rtf";
   if (extension === "md" || extension === "markdown" || extension === "mkd" || extension === "mkdn") return "markdown";
   if (extension === "html" || extension === "htm" || extension === "xhtml") return "html";

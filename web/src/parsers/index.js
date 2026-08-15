@@ -5,6 +5,7 @@ import { parseHtmlFile } from "./htmlParser";
 import { parseImageFile } from "./imageParser";
 import { parseMarkdownFile } from "./markdownParser";
 import { parsePptxFile } from "./pptxParser";
+import { parsePdfFile } from "./pdfParser";
 import { parseRtfFile } from "./rtfParser";
 import { parseSpreadsheetFile } from "./spreadsheetParser";
 import { parseTextFile } from "./textParser";
@@ -17,6 +18,7 @@ const PARSER_TABLE = {
   xls: parseSpreadsheetFile,
   csv: parseSpreadsheetFile,
   pptx: parsePptxFile,
+  pdf: parsePdfFile,
   rtf: parseRtfFile,
   markdown: parseMarkdownFile,
   html: parseHtmlFile,

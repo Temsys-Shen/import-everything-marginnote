@@ -5,6 +5,7 @@ import { parseHtmlFile } from "../parsers/htmlParser";
 import { parseImageFile } from "../parsers/imageParser";
 import { parseMarkdownFile } from "../parsers/markdownParser";
 import { parsePptxFile } from "../parsers/pptxParser";
+import { parsePdfFile } from "../parsers/pdfParser";
 import { parseRtfFile } from "../parsers/rtfParser";
 import { parseSpreadsheetFile } from "../parsers/spreadsheetParser";
 import { parseTextFile } from "../parsers/textParser";
@@ -16,6 +17,7 @@ const LEGACY_PARSER_TABLE = {
   xls: parseSpreadsheetFile,
   csv: parseSpreadsheetFile,
   pptx: parsePptxFile,
+  pdf: parsePdfFile,
   rtf: parseRtfFile,
   markdown: parseMarkdownFile,
   html: parseHtmlFile,

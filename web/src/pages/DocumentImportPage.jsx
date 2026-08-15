@@ -51,6 +51,7 @@ import {
   revokeAllObjectURLs,
   revokeObjectURLsForFiles,
 } from "../parsers/objectUrlRegistry";
+import { inlineBlobImages } from "../mindmap/imageUtils";
 import EngineSettingsPopup from "../components/EngineSettingsPopup";
 import { registerLegacyJsEngine } from "../engines/legacyJsEngine";
 import { registerReamkitEngine } from "../engines/reamkitEngine";
@@ -85,6 +86,7 @@ function sourceTypeLabel(sourceType) {
   if (sourceType === "html") return "HTML";
   if (sourceType === "text") return "文本";
   if (sourceType === "epub") return "EPUB";
+  if (sourceType === "pdf") return "PDF";
   if (sourceType === "image") return "图片";
   if (sourceType === "code") return "代码";
   if (sourceType === "unsupported") return "暂不支持";
@@ -406,6 +408,7 @@ function DocumentImportPage() {
   const stylePickerRef = useRef(null);
   const previewViewportRef = useRef(null);
   const previousSelectedFilesRef = useRef([]);
+  const saveInFlightRef = useRef(false);
 
   const previewModel = useMemo(() => buildMergedPreviewModel(documents), [documents]);
   const compactPreviewModel = useMemo(
@@ -955,6 +958,10 @@ function DocumentImportPage() {
     if (!canImportToMN) {
       return;
     }
+    if (saveInFlightRef.current) {
+      return;
+    }
+    saveInFlightRef.current = true;
 
     setSaveRunId((value) => value + 1);
     setHasSaveAttempt(true);
@@ -964,6 +971,7 @@ function DocumentImportPage() {
     let exportRoot = null;
     try {
       exportRoot = document.createElement("div");
+      exportRoot.id = "ie-export-root";
       exportRoot.className = "merged-preview themed-document";
       exportRoot.dataset.exportThemeRoot = "true";
       exportRoot.dataset.exportStyleId = activeStyleId || "default";
@@ -986,13 +994,14 @@ function DocumentImportPage() {
       document.body.appendChild(exportRoot);
       prepareKaTeXForExport(exportRoot);
       await waitForImages(exportRoot);
+      await inlineBlobImages(exportRoot);
 
       const cssLines = [
         "body{margin:0;background:#fff;font-family:-apple-system,'PingFang SC',sans-serif;font-size:13px;line-height:1.6;color:#182018}",
         ".content-html img{max-width:100%;height:auto;display:block}",
         ".content-html p,.content-html ul,.content-html ol{margin:1em 0}",
         ".content-html ul,.content-html ol{padding-left:1.5em}",
-        ".content-section h4{margin-bottom:8px;font-size:15px;line-height:1.4}",
+        ".content-section h4{margin:0 0 8px;font-size:15px;line-height:1.4}",
       ];
       if (typeof themeCssText === "string") cssLines.push(themeCssText);
 
@@ -1076,6 +1085,7 @@ function DocumentImportPage() {
       if (exportRoot && exportRoot.parentNode) {
         exportRoot.parentNode.removeChild(exportRoot);
       }
+      saveInFlightRef.current = false;
       setIsSaving(false);
     }
   }

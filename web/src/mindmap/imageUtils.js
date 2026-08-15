@@ -41,6 +41,32 @@ export function blobToBase64(blob) {
   });
 }
 
+export async function inlineBlobImages(root) {
+  if (!root || typeof root.querySelectorAll !== "function") {
+    return;
+  }
+
+  const images = Array.from(root.querySelectorAll("img"));
+  for (const img of images) {
+    const src = String(img.getAttribute("src") || "");
+    if (!/^(blob|file):/i.test(src)) {
+      continue;
+    }
+
+    try {
+      const response = await fetch(src);
+      if (!response.ok) {
+        throw new Error(`fetch failed with status ${response.status}`);
+      }
+      const blob = await response.blob();
+      const base64 = await blobToBase64(blob);
+      img.setAttribute("src", `data:${blob.type || "application/octet-stream"};base64,${base64}`);
+    } catch (error) {
+      console.log(`[ImportEverything] inline blob image failed: ${String(error)}`);
+    }
+  }
+}
+
 function loadImageDimensions(mimeType, base64) {
   return new Promise((resolve) => {
     const img = new Image();

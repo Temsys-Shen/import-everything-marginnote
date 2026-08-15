@@ -21,6 +21,15 @@ const CONVERSION_STAGE_META = {
     start: 0.48,
     end: 0.88,
   },
+  "parse-pdf": {
+    label: "解析PDF",
+    ratio: 0.3,
+  },
+  "render-pdf": {
+    label: "渲染PDF页面",
+    start: 0.48,
+    end: 0.88,
+  },
   complete: {
     label: "转换完成",
     ratio: 1,

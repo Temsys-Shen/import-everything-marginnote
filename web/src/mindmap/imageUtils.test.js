@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeAll } from "vitest";
-import { compressImage, blobToBase64 } from "./imageUtils";
+import { compressImage, blobToBase64, inlineBlobImages } from "./imageUtils";
 
 beforeAll(() => {
   vi.stubGlobal("createImageBitmap", async () => ({
@@ -83,6 +83,37 @@ describe("blobToBase64", () => {
     const b64 = await blobToBase64(blob);
     expect(b64).not.toContain(",");
     expect(b64).not.toContain("data:");
+  });
+});
+
+describe("inlineBlobImages", () => {
+  it("把blob图片内联为data URI", async () => {
+    const root = document.createElement("div");
+    root.innerHTML = '<img src="blob:http://localhost/1" /><img src="data:image/png;base64,AAAA" />';
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      blob: async () => new Blob(["hello"], { type: "image/png" }),
+    })));
+
+    await inlineBlobImages(root);
+
+    const images = Array.from(root.querySelectorAll("img"));
+    expect(images[0].getAttribute("src")).toBe("data:image/png;base64,aGVsbG8=");
+    expect(images[1].getAttribute("src")).toBe("data:image/png;base64,AAAA");
+    vi.restoreAllMocks();
+  });
+
+  it("图片读取失败时保留原src", async () => {
+    const root = document.createElement("div");
+    root.innerHTML = '<img src="blob:http://localhost/missing" />';
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new Error("network down");
+    }));
+
+    await inlineBlobImages(root);
+
+    expect(root.querySelector("img").getAttribute("src")).toBe("blob:http://localhost/missing");
+    vi.restoreAllMocks();
   });
 });
 

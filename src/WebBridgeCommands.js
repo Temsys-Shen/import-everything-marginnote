@@ -321,18 +321,61 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
     throw new Error(`${name} does not support indexed access`);
   }
 
+  function resolveDocumentFromNoteMd5(note) {
+    const docMd5 = note ? String(note.docMd5 || "") : "";
+    if (!docMd5) {
+      return null;
+    }
+    return Database.sharedInstance().getDocumentById(docMd5) || null;
+  }
+
+  function resolveCurrentMindmapDocument(studyController, notebook, targetNote, focusNote) {
+    const readerController = studyController.readerController;
+    const documentController = readerController ? readerController.currentDocumentController : null;
+    if (documentController && documentController.document) {
+      return {
+        document: documentController.document,
+        documentController: documentController,
+      };
+    }
+
+    const noteDocument = resolveDocumentFromNoteMd5(targetNote) || resolveDocumentFromNoteMd5(focusNote);
+    if (noteDocument) {
+      return {
+        document: noteDocument,
+        documentController: null,
+      };
+    }
+
+    if (notebook) {
+      const mainDocMd5 = String(notebook.mainDocMd5 || "");
+      if (mainDocMd5) {
+        const mainDocument = Database.sharedInstance().getDocumentById(mainDocMd5);
+        if (mainDocument) {
+          return {
+            document: mainDocument,
+            documentController: null,
+          };
+        }
+      }
+
+      const notebookDocument = bridgedArrayItem(notebook.documents, 0, "notebook.documents");
+      if (notebookDocument) {
+        return {
+          document: notebookDocument,
+          documentController: null,
+        };
+      }
+    }
+
+    throw new Error("current document is unavailable");
+  }
+
   function currentMindmapImportContext(context) {
     const studyController = studyControllerForContext(context);
     const notebookController = studyController.notebookController;
     if (!notebookController) {
       throw new Error("notebookController is unavailable");
-    }
-
-    const readerController = studyController.readerController;
-    const documentController = readerController ? readerController.currentDocumentController : null;
-    const document = documentController ? documentController.document : null;
-    if (!document) {
-      throw new Error("current document is unavailable");
     }
 
     const notebookId = String(notebookController.notebookId || "");
@@ -363,13 +406,15 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
       targetNote = selectedNode.note;
     }
 
+    const resolved = resolveCurrentMindmapDocument(studyController, notebook, targetNote, focusNote);
+
     return {
       studyController,
       notebookController,
-      documentController,
+      documentController: resolved.documentController,
       notebook,
       notebookId,
-      document,
+      document: resolved.document,
       focusNote,
       selectedCount,
       targetKind,
@@ -985,12 +1030,12 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
         }
       }
 
-      function prepareCaptureSession(totalHeight) {
-        const pageCount = Math.max(1, Math.ceil(totalHeight / pageHeight));
+      function prepareCaptureSession(contentHeight, pageCount, totalHeight) {
         htmlCaptureSessions[sessionId] = {
           webView: tempWebView,
           pageWidth: pageWidth,
           pageHeight: pageHeight,
+          contentHeight: contentHeight,
           totalHeight: totalHeight,
           pageCount: pageCount,
         };
@@ -998,6 +1043,7 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
           sessionId: sessionId,
           width: pageWidth,
           height: totalHeight,
+          contentHeight: contentHeight,
           pageWidth: pageWidth,
           pageHeight: pageHeight,
           pageCount: pageCount,
@@ -1024,17 +1070,51 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
 
             bridgeProgress("正在调整页面布局");
             tempWebView.evaluateJavaScript(
-              "Math.max(document.body.scrollHeight||0,document.documentElement.scrollHeight||0)||0",
-              function (hResult) {
+              [
+                "(function(){",
+                "var root=document.getElementById('ie-export-root');",
+                "var rect=root&&root.getBoundingClientRect?root.getBoundingClientRect():null;",
+                "var rootHeight=rect?Math.ceil(rect.height):0;",
+                "var bodyHeight=Math.max(document.body.scrollHeight||0,document.documentElement.scrollHeight||0)||0;",
+                "return JSON.stringify({rootHeight:rootHeight,bodyHeight:bodyHeight});",
+                "})()",
+              ].join(""),
+              function (raw) {
                 if (done) return;
-                var sh = Number(hResult) || 0;
-                console.log("[ImportEverything] scrollHeight=" + sh);
-                const totalHeight = Math.max(pageHeight, Math.ceil(sh + 40));
+                var info = null;
+                try {
+                  info = JSON.parse(raw);
+                } catch (e) {
+                  console.log("[ImportEverything] measure parse error: " + String(e));
+                }
+                var rootHeight = info && Number(info.rootHeight) > 0 ? Number(info.rootHeight) : 0;
+                var bodyHeight = info && Number(info.bodyHeight) > 0 ? Number(info.bodyHeight) : 0;
+                console.log("[ImportEverything] measure: rootHeight=" + rootHeight + " bodyHeight=" + bodyHeight);
+                const contentHeight = Math.max(pageHeight, rootHeight > 0 ? rootHeight : bodyHeight);
+                const pageCount = Math.max(1, Math.ceil(contentHeight / pageHeight));
+                const totalHeight = pageCount * pageHeight;
+                const spacerHeight = Math.max(0, totalHeight - contentHeight);
+
                 tempWebView.frame = { x: -5000, y: 0, width: pageWidth, height: pageHeight };
-                NSTimer.scheduledTimerWithTimeInterval(0.15, false, function () {
-                  if (done) return;
-                  prepareCaptureSession(totalHeight);
-                });
+                if (spacerHeight <= 0) {
+                  NSTimer.scheduledTimerWithTimeInterval(0.15, false, function () {
+                    if (done) return;
+                    prepareCaptureSession(contentHeight, pageCount, totalHeight);
+                  });
+                  return;
+                }
+
+                tempWebView.evaluateJavaScript(
+                  "(function(){var s=document.getElementById('ie-capture-padding');if(s&&s.parentNode){s.parentNode.removeChild(s);}s=document.createElement('div');s.id='ie-capture-padding';s.style.height='" + spacerHeight + "px';s.style.margin='0';s.style.padding='0';s.style.border='0';document.body.appendChild(s);return document.body.scrollHeight;})()",
+                  function (hResult) {
+                    if (done) return;
+                    console.log("[ImportEverything] padded scrollHeight=" + hResult + " expected=" + totalHeight);
+                    NSTimer.scheduledTimerWithTimeInterval(0.15, false, function () {
+                      if (done) return;
+                      prepareCaptureSession(contentHeight, pageCount, totalHeight);
+                    });
+                  }
+                );
               }
             );
           }
@@ -1072,46 +1152,60 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
     }
 
     return new Promise(function (resolve) {
-      const offsetY = Math.floor(pageIndex * session.pageHeight);
+      const offsetY = Math.round(pageIndex * session.pageHeight);
       const webView = session.webView;
+      const maxOffsetY = Math.max(0, session.totalHeight - session.pageHeight);
+      const targetOffsetY = Math.min(offsetY, maxOffsetY);
 
       webView.evaluateJavaScript(
-        "window.scrollTo(0," + offsetY + ");document.documentElement.scrollTop=" + offsetY + ";document.body.scrollTop=" + offsetY,
+        "window.scrollTo(0," + targetOffsetY + ");document.documentElement.scrollTop=" + targetOffsetY + ";document.body.scrollTop=" + targetOffsetY,
         function () {
+          if (webView.scrollView && webView.scrollView.setContentOffsetAnimated) {
+            webView.scrollView.setContentOffsetAnimated({ x: 0, y: targetOffsetY }, false);
+          }
           NSTimer.scheduledTimerWithTimeInterval(0.08, false, function () {
-            webView.takeSnapshotWithWidth(session.pageWidth, function (image) {
-              if (!image) {
-                resolve(responseFail("CAPTURE_PAGE_EMPTY", "takeSnapshot returned null at page " + pageIndex));
-                return;
-              }
+            webView.evaluateJavaScript(
+              "JSON.stringify({y:window.scrollY||window.pageYOffset||0,dTop:document.documentElement.scrollTop||0,bTop:document.body.scrollTop||0})",
+              function (raw) {
+                if (!raw) {
+                  raw = "{}";
+                }
+                console.log("[ImportEverything] scroll page " + (pageIndex + 1) + " -> " + raw + " target=" + targetOffsetY);
+                webView.takeSnapshotWithWidth(session.pageWidth, function (image) {
+                  if (!image) {
+                    resolve(responseFail("CAPTURE_PAGE_EMPTY", "takeSnapshot returned null at page " + pageIndex));
+                    return;
+                  }
 
-              const w = image.size ? image.size.width : 0;
-              const h = image.size ? image.size.height : 0;
-              console.log("[ImportEverything] snapshot page " + (pageIndex + 1) + "/" + session.pageCount + " size: " + w + "x" + h);
+                  const w = image.size ? image.size.width : 0;
+                  const h = image.size ? image.size.height : 0;
+                  console.log("[ImportEverything] snapshot page " + (pageIndex + 1) + "/" + session.pageCount + " size: " + w + "x" + h);
 
-              if (w <= 0 || h <= 0) {
-                resolve(responseFail("CAPTURE_PAGE_ZERO_DIMENSION", "Snapshot has zero dimension at page " + pageIndex));
-                return;
-              }
+                  if (w <= 0 || h <= 0) {
+                    resolve(responseFail("CAPTURE_PAGE_ZERO_DIMENSION", "Snapshot has zero dimension at page " + pageIndex));
+                    return;
+                  }
 
-              let nsData = image.jpegData(jpegQuality);
-              if (!nsData || nsData.length() === 0) {
-                nsData = image.pngData();
-              }
-              if (!nsData || nsData.length() === 0) {
-                resolve(responseFail("CAPTURE_PAGE_ENCODE_EMPTY", "jpegData and pngData both returned empty at page " + pageIndex));
-                return;
-              }
+                  let nsData = image.jpegData(jpegQuality);
+                  if (!nsData || nsData.length() === 0) {
+                    nsData = image.pngData();
+                  }
+                  if (!nsData || nsData.length() === 0) {
+                    resolve(responseFail("CAPTURE_PAGE_ENCODE_EMPTY", "jpegData and pngData both returned empty at page " + pageIndex));
+                    return;
+                  }
 
-              resolve(responseOk("CAPTURE_PAGE_OK", "Snapshot page captured", {
-                data: nsData.base64Encoding(),
-                width: w,
-                height: h,
-                offsetY: offsetY,
-                pageIndex: pageIndex,
-                pageCount: session.pageCount,
-              }));
-            });
+                  resolve(responseOk("CAPTURE_PAGE_OK", "Snapshot page captured", {
+                    data: nsData.base64Encoding(),
+                    width: w,
+                    height: h,
+                    offsetY: targetOffsetY,
+                    pageIndex: pageIndex,
+                    pageCount: session.pageCount,
+                  }));
+                });
+              }
+            );
           });
         }
       );
