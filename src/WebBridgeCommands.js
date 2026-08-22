@@ -359,7 +359,15 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
         }
       }
 
-      const notebookDocument = bridgedArrayItem(notebook.documents, 0, "notebook.documents");
+      const notebookDocuments = notebook.documents;
+      if (notebookDocuments) {
+        const documentCount = bridgedArrayLength(notebookDocuments, "notebook.documents");
+        if (documentCount === 0) {
+          throw new Error("notebook.documents is empty");
+        }
+      }
+
+      const notebookDocument = bridgedArrayItem(notebookDocuments, 0, "notebook.documents");
       if (notebookDocument) {
         return {
           document: notebookDocument,

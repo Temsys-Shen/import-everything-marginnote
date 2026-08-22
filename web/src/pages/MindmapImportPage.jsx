@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import PageTopbar from "../components/PageTopbar";
 import ProgressCard from "../components/ProgressCard";
-import MindmapCanvasPreview from "../mindmap/MindmapCanvasPreview";
+import MindmapFlowPreview from "../mindmap/MindmapFlowPreview";
 import { buildMindmapImportPreview } from "../mindmap/model";
 import { detectMindmapSourceType, parseMindmapFileBySourceType } from "../mindmap/sourceTypes";
 import { buildMindmapImportProgressModel } from "../progress/progressModel";
@@ -40,6 +40,19 @@ function buildImportSuccessText(result) {
     return "脑图导入已完成";
   }
   return `脑图导入完成，共创建${count}个节点`;
+}
+
+function formatMindmapContextError(error) {
+  const message = error && error.message ? error.message : String(error);
+  const noDocumentError = message === "current document is unavailable"
+    || message === "notebook.documents is empty"
+    || message === "notebook.documents is unavailable";
+
+  if (noDocumentError) {
+    return "当前学习集内没有可用文档，请先向学习集导入至少一个文档后再导入脑图。";
+  }
+
+  return message;
 }
 
 function collectPreviewSheetIds(preview) {
@@ -109,7 +122,7 @@ function MindmapImportPage() {
         }
         setContextState({
           loading: false,
-          error: error && error.message ? error.message : String(error),
+          error: formatMindmapContextError(error),
           value: null,
         });
       }
@@ -638,7 +651,7 @@ function MindmapImportPage() {
                         </div>
                       </div>
                     ) : null}
-                    <MindmapCanvasPreview
+                    <MindmapFlowPreview
                       root={activeSheet.root}
                       includeMarkdownContent={!!isMarkdownPreview && includeMarkdownContent}
                     />

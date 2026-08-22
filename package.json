@@ -32,6 +32,7 @@
     "@antv/x6": "3.1.7",
     "@antv/x6-react-shape": "3.0.1",
     "@jvmr/pptx-to-html": "^1.0.1",
+    "@xyflow/react": "^12.11.3",
     "docx-preview": "^0.3.7",
     "dompurify": "^3.4.1",
     "epubjs": "^0.3.93",

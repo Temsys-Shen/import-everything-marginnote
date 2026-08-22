@@ -91,7 +91,19 @@ export function measureMindmapNodeSize(topic, options = {}) {
   probe.style.width = `${width}px`;
   probe.innerHTML = createNodeHtml(title, comment, options.isRoot === true, null);
   measureContainer.appendChild(probe);
-  const height = Math.max(MINDMAP_X6_MIN_NODE_HEIGHT, Math.ceil(probe.scrollHeight));
+  const card = probe.querySelector(".mindmap-node-card");
+  if (card) {
+    // Percentage height is correct for the rendered X6 node, but prevents the
+    // hidden probe from growing to KaTeX's actual glyph bounds.
+    card.style.height = "auto";
+  }
+  const probeRect = probe.getBoundingClientRect();
+  const renderedBottom = Array.from(probe.querySelectorAll(".mindmap-node-card, .katex-display, .katex-html"))
+    .reduce((bottom, element) => Math.max(bottom, element.getBoundingClientRect().bottom - probeRect.top), 0);
+  const height = Math.max(
+    MINDMAP_X6_MIN_NODE_HEIGHT,
+    Math.ceil(Math.max(probe.scrollHeight, renderedBottom)),
+  );
   measureContainer.removeChild(probe);
 
   return { width, height };

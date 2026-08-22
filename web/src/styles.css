@@ -619,21 +619,27 @@ ol {
   cursor: grabbing;
 }
 
-.mindmap-x6-shell {
+.mindmap-flow-shell {
   cursor: grab;
 }
 
-.mindmap-x6-shell:active {
+.mindmap-flow-shell:active {
   cursor: grabbing;
 }
 
-.mindmap-x6-graph {
+.mindmap-flow-shell .react-flow {
   position: absolute;
   inset: 0;
 }
 
-.mindmap-x6-graph .x6-node {
-  overflow: visible;
+.mindmap-flow-shell .react-flow__node {
+  cursor: grab;
+}
+
+.mindmap-flow-shell .react-flow__handle {
+  visibility: hidden;
+  width: 1px;
+  height: 1px;
 }
 
 .mindmap-node-card {
@@ -646,6 +652,7 @@ ol {
   box-shadow: none;
   color: #182018;
   padding: 13px 15px;
+  overflow: hidden;
   overflow-wrap: anywhere;
   word-break: break-word;
 }
@@ -689,6 +696,27 @@ ol {
 .mindmap-node-markdown.content-html {
   font-size: 12px;
   line-height: 1.55;
+}
+
+/* Keep KaTeX's accessibility MathML layer out of the visual layout. */
+.mindmap-node-markdown.content-html .katex .katex-mathml {
+  display: none !important;
+}
+
+.mindmap-node-markdown.content-html .katex-display {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  margin: 1em 0;
+  text-align: center;
+}
+
+/* KaTeX 内部 SVG（如 \vec 箭头）是绝对定位，其包含块 .accent-body 宽度为 0；
+   content-html 全局 svg 规则的 max-width:100%/height:auto 会把箭头钳制为 0。
+   这里恢复 KaTeX 自己的宽度/高度控制。 */
+.mindmap-node-markdown.content-html .katex svg {
+  max-width: none;
+  height: inherit;
 }
 
 .mindmap-node-markdown.content-html > :first-child {

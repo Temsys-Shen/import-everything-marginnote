@@ -23,6 +23,9 @@ const KATEX_SANITIZE_CONFIG = {
     "merror", "mover", "munder", "munderover", "msubsup",
     "mmultiscripts", "mprescripts", "none", "mtd", "mtr", "mtable",
     "menclose", "mpadded",
+    "svg", "path", "g", "defs", "use", "symbol", "marker", "line",
+    "polyline", "polygon", "circle", "rect", "text", "tspan",
+    "clippath", "lineargradient", "radialgradient", "stop", "mask",
   ],
   ADD_ATTR: [
     "class", "style",
@@ -31,6 +34,11 @@ const KATEX_SANITIZE_CONFIG = {
     "linethickness", "scriptlevel", "lspace", "rspace",
     "stretchy", "symmetric", "maxsize", "minsize",
     "accent", "moveablelimits",
+    "xmlns", "viewbox", "preserveaspectratio", "d",
+    "fill", "fill-rule", "fill-opacity", "stroke", "stroke-width",
+    "stroke-linecap", "stroke-linejoin", "stroke-opacity",
+    "x", "y", "x1", "y1", "x2", "y2", "cx", "cy", "r", "rx", "ry",
+    "width", "height", "transform", "points", "offset", "stop-color",
   ],
 };
 
