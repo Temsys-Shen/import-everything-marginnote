@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { ArrowLeft, X, ChevronRight, ChevronDown, ChevronUp, Plus, Minus, Settings } from "lucide-react";
 import PageTopbar from "../components/PageTopbar";
 import { runConversionPipeline, buildInitialDocuments, reconvertBySourceTypes } from "../pipeline/convertPipeline";
 import { ParseStatus } from "../pipeline/documentModel";
@@ -1444,7 +1445,7 @@ function DocumentImportPage() {
             aria-expanded={stylePickerOpen ? "true" : "false"}
           >
             <span>{activeStyleLabel}</span>
-            <span className="style-picker-caret">{stylePickerOpen ? "▲" : "▼"}</span>
+            <span className="style-picker-caret">{stylePickerOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}</span>
           </button>
 
           {stylePickerOpen ? (
@@ -1728,29 +1729,43 @@ function DocumentImportPage() {
         {step === "result" ? (
           <section className="surface result-surface result-layout">
             <div className="result-toolbar">
-              <div className="summary-row">
-                <span>{successCount}个成功</span>
-                <span>{errorCount}个失败</span>
-                <span>{previewModel.totalContentSections}段正文</span>
-              </div>
+              <button
+                type="button"
+                className="button button-ghost button-small page-topbar-back"
+                onClick={returnToSelection}
+                title="返回文件列表"
+                aria-label="返回文件列表"
+              >
+                <ArrowLeft size={16} />
+              </button>
 
               <div className="card-actions">
+                {compactPreviewModel.hasHiddenContentSections ? (
+                  <button
+                    type="button"
+                    className="button button-ghost button-small"
+                    onClick={() => setShowFullPreview((value) => !value)}
+                  >
+                    {showFullPreview ? "收起预览" : "展开全部"}
+                  </button>
+                ) : null}
+                <span className="result-status-text">
+                  <strong>{successCount}</strong> 个成功
+                  {errorCount > 0 ? (
+                    <span className="result-status-sep" aria-hidden="true">·</span>
+                  ) : null}
+                  {errorCount > 0 ? <span className="result-status-error">{errorCount} 个失败</span> : null}
+                  <span className="result-status-sep" aria-hidden="true">·</span>
+                  <span className="result-status-meta-inline">{previewModel.totalContentSections} 段正文</span>
+                </span>
                 <button
                   type="button"
                   className="button button-secondary"
                   onClick={openSettingsDrawer}
                 >
+                  <Settings size={14} />
                   导入设置
                 </button>
-                {compactPreviewModel.hasHiddenContentSections ? (
-                  <button
-                    type="button"
-                    className="button button-secondary"
-                    onClick={() => setShowFullPreview((value) => !value)}
-                  >
-                    {showFullPreview ? "收起到精简预览" : "展开全部预览"}
-                  </button>
-                ) : null}
               </div>
             </div>
 
@@ -1764,69 +1779,50 @@ function DocumentImportPage() {
               </div>
             ) : null}
 
-            <div className="result-fixed-headers">
-              <div className="preview-stage-head">
-                <div className="preview-stage-title">
-                  <h2>正文预览</h2>
-                </div>
-
-                <div className="preview-stage-tools">
-                  <div className="preview-zoom-control">
-                    <span className="preview-zoom-label">缩放</span>
-                    <button
-                      type="button"
-                      className="button button-ghost button-small"
-                      onClick={() => adjustPreviewZoom(-PREVIEW_ZOOM_STEP)}
-                      disabled={previewZoomLevel <= PREVIEW_ZOOM_MIN}
-                    >
-                      缩小
-                    </button>
-                    <input
-                      className="preview-zoom-range"
-                      type="range"
-                      min={PREVIEW_ZOOM_MIN}
-                      max={PREVIEW_ZOOM_MAX}
-                      step={PREVIEW_ZOOM_STEP}
-                      value={previewZoomLevel}
-                      onChange={(event) => {
-                        setPreviewZoomTouched(true);
-                        setPreviewZoomLevel(clampPreviewZoom(event.target.value));
-                      }}
-                      aria-label="调整预览缩放"
-                    />
-                    <button
-                      type="button"
-                      className="button button-ghost button-small"
-                      onClick={() => adjustPreviewZoom(PREVIEW_ZOOM_STEP)}
-                      disabled={previewZoomLevel >= PREVIEW_ZOOM_MAX}
-                    >
-                      放大
-                    </button>
-                    <button
-                      type="button"
-                      className="button button-secondary button-small"
-                      onClick={resetPreviewZoom}
-                      disabled={previewZoomLevel === 100}
-                    >
-                      100%
-                    </button>
-                    <span className="preview-zoom-value">{previewZoomLevel}%</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
             <div className="result-scroll-wrap" ref={previewViewportRef}>
-              <div className="result-page-topbar">
-                <button
-                  type="button"
-                  className="button button-ghost button-small"
-                  onClick={returnToSelection}
-                >
-                  ← 文档导入
-                </button>
+              <div className="preview-zoom-floating">
+                <div className="preview-zoom-floating-inner">
+                  <button
+                    type="button"
+                    className="button button-ghost button-small icon-only-button"
+                    onClick={() => adjustPreviewZoom(-PREVIEW_ZOOM_STEP)}
+                    disabled={previewZoomLevel <= PREVIEW_ZOOM_MIN}
+                    aria-label="缩小"
+                  >
+                    <Minus size={16} />
+                  </button>
+                  <input
+                    className="preview-zoom-range"
+                    type="range"
+                    min={PREVIEW_ZOOM_MIN}
+                    max={PREVIEW_ZOOM_MAX}
+                    step={PREVIEW_ZOOM_STEP}
+                    value={previewZoomLevel}
+                    onChange={(event) => {
+                      setPreviewZoomTouched(true);
+                      setPreviewZoomLevel(clampPreviewZoom(event.target.value));
+                    }}
+                    aria-label="调整预览缩放"
+                  />
+                  <button
+                    type="button"
+                    className="button button-ghost button-small icon-only-button"
+                    onClick={() => adjustPreviewZoom(PREVIEW_ZOOM_STEP)}
+                    disabled={previewZoomLevel >= PREVIEW_ZOOM_MAX}
+                    aria-label="放大"
+                  >
+                    <Plus size={16} />
+                  </button>
+                  <button
+                    type="button"
+                    className="button button-secondary button-small preview-zoom-reset"
+                    onClick={resetPreviewZoom}
+                    disabled={previewZoomLevel === 100}
+                  >
+                    {previewZoomLevel}%
+                  </button>
+                </div>
               </div>
-
               <div className="preview-stage-body">
                 <div className="preview-zoom-shell" style={previewZoomShellStyle}>
                   <div
@@ -1968,12 +1964,12 @@ function DocumentImportPage() {
               onClick={closeSettingsDrawer}
               aria-label="关闭导入设置"
             >
-              <span className="drawer-close-side-icon">✕</span>
+              <span className="drawer-close-side-icon"><X size={16} /></span>
             </button>
             <div className="drawer-inner">
               <div className="drawer-head" onClick={closeSettingsDrawer}>
                 <div className="drawer-head-left">
-                  <span className="drawer-chevron">❮</span>
+                  <span className="drawer-chevron"><ChevronRight size={16} /></span>
                   <h2>导入设置</h2>
                 </div>
               </div>

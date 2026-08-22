@@ -150,6 +150,7 @@ function MindmapFlowCanvas({ root, includeMarkdownContent = false }) {
           zoomOnDoubleClick={false}
           panOnDrag
           zoomOnScroll
+          proOptions={{ hideAttribution: true }}
         />
         <div ref={measureContainerRef} className="mindmap-node-measure" aria-hidden="true" />
       </div>

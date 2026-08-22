@@ -150,21 +150,21 @@ export function buildScopedThemeCss(options) {
   const baseCss = `
 :root {
   --preview-page-bg: #ffffff;
-  --preview-text-color: #182018;
-  --preview-muted-color: #687363;
-  --preview-heading-color: #122418;
-  --preview-line-color: #d9e1d8;
+  --preview-text-color: #1d2129;
+  --preview-muted-color: #6b7280;
+  --preview-heading-color: #1d2129;
+  --preview-line-color: #e5e7eb;
   --preview-block-bg: #ffffff;
-  --preview-code-bg: #142118;
-  --preview-code-color: #f3f6f2;
-  --preview-code-muted-color: #8ea19a;
-  --preview-code-keyword-color: #7dd3b0;
+  --preview-code-bg: #1f2530;
+  --preview-code-color: #e7eaf0;
+  --preview-code-muted-color: #9aa3b2;
+  --preview-code-keyword-color: #8cb7ff;
   --preview-code-string-color: #f4d38b;
   --preview-code-number-color: #f2a97d;
-  --preview-code-title-color: #8cb7ff;
+  --preview-code-title-color: #c4b5fd;
   --preview-code-attr-color: #b7e08a;
   --preview-code-variable-color: #f1b2d0;
-  --preview-accent-color: #1f6a49;
+  --preview-accent-color: #3b5998;
   --preview-cover-align: left;
   --preview-body-font-stack: ${stacks.body};
   --preview-heading-font-stack: ${stacks.heading};
@@ -203,6 +203,7 @@ export function buildScopedThemeCss(options) {
 .themed-document .content-html th {
   color: var(--preview-text-color);
   font-family: inherit;
+  text-align: left;
 }
 
 .themed-document .content-html {
@@ -211,6 +212,7 @@ export function buildScopedThemeCss(options) {
   overflow-wrap: anywhere;
   word-break: break-word;
   min-width: 0;
+  text-align: left;
 }
 
 .themed-document .content-html h1,

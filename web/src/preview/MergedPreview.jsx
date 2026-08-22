@@ -7,7 +7,7 @@ function renderContentSection(section) {
   return (
     <section
       key={section.id}
-      className={`print-block content-section ${section.pageBreakBefore ? "print-page-break" : ""}`}
+      className={`content-section ${section.pageBreakBefore ? "print-page-break" : ""}`}
     >
       <h4>{section.title}</h4>
       <div

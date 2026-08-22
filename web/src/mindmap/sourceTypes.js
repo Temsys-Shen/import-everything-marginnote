@@ -34,9 +34,9 @@ export function detectMindmapSourceType(file) {
   return "unsupported";
 }
 
-export async function parseMindmapFileBySourceType(sourceType, file) {
+export async function parseMindmapFileBySourceType(sourceType, file, options = {}) {
   if (sourceType === "markdown") {
-    return parseMarkdownMindmapFile(file);
+    return parseMarkdownMindmapFile(file, options);
   }
   if (sourceType === "xmind") {
     return parseXmindMindmapFile(file);

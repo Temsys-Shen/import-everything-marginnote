@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { ChevronDown, ChevronUp } from "lucide-react";
 import PageTopbar from "../components/PageTopbar";
 import ProgressCard from "../components/ProgressCard";
 import MindmapFlowPreview from "../mindmap/MindmapFlowPreview";
@@ -91,6 +92,7 @@ function MindmapImportPage() {
   const [selectedSheetIds, setSelectedSheetIds] = useState([]);
   const [sheetPickerOpen, setSheetPickerOpen] = useState(false);
   const [includeMarkdownContent, setIncludeMarkdownContent] = useState(true);
+  const [includeListAsChildren, setIncludeListAsChildren] = useState(true);
   const importPollTimerRef = useRef(null);
   const importTaskIdRef = useRef("");
 
@@ -196,9 +198,15 @@ function MindmapImportPage() {
     setSheetPickerOpen(false);
   }, [step, preview, activeSheetId]);
 
-  async function handleFileSelection(file) {
+  async function handleFileSelection(file, override = {}) {
+    const effectiveIncludeLists = override.includeListsAsChildren !== undefined
+      ? override.includeListsAsChildren
+      : includeListAsChildren;
     clearImportPolling();
     setSelectedFile(file);
+    if (override.includeListsAsChildren === undefined) {
+      setIncludeListAsChildren(true);
+    }
     setIncludeMarkdownContent(true);
     setImportState({
       loading: false,
@@ -239,7 +247,9 @@ function MindmapImportPage() {
     });
 
     try {
-      const tree = await parseMindmapFileBySourceType(sourceType, file);
+      const tree = await parseMindmapFileBySourceType(sourceType, file, {
+        includeListsAsChildren: effectiveIncludeLists,
+      });
       const nextPreview = buildMindmapImportPreview(tree);
 
       setParseState({
@@ -311,6 +321,7 @@ function MindmapImportPage() {
     setActiveSheetId("");
     setSelectedSheetIds([]);
     setIncludeMarkdownContent(true);
+    setIncludeListAsChildren(true);
   }
 
   function onSheetSelectionChange(sheetId, checked) {
@@ -554,18 +565,36 @@ function MindmapImportPage() {
 
             <div className="mindmap-sheet-bar">
               {isMarkdownPreview ? (
-                <label className="mindmap-content-toggle">
-                  <input
-                    type="checkbox"
-                    checked={includeMarkdownContent}
-                    disabled={importState.loading}
-                    onChange={(event) => setIncludeMarkdownContent(event.target.checked)}
-                  />
-                  <span>
-                    <strong>包含Markdown正文</strong>
-                    <small>开启后标题下正文会显示在同一节点卡片内，并作为该卡片评论导入。</small>
-                  </span>
-                </label>
+                <div className="mindmap-content-toggles">
+                  <label className="mindmap-content-toggle">
+                    <input
+                      type="checkbox"
+                      checked={includeListAsChildren}
+                      disabled={importState.loading || parseState.loading}
+                      onChange={(event) => {
+                        const next = event.target.checked;
+                        setIncludeListAsChildren(next);
+                        if (selectedFile) {
+                          void handleFileSelection(selectedFile, { includeListsAsChildren: next });
+                        }
+                      }}
+                    />
+                    <span>
+                      <strong>列表作为子节点</strong>
+                    </span>
+                  </label>
+                  <label className="mindmap-content-toggle">
+                    <input
+                      type="checkbox"
+                      checked={includeMarkdownContent}
+                      disabled={importState.loading}
+                      onChange={(event) => setIncludeMarkdownContent(event.target.checked)}
+                    />
+                    <span>
+                      <strong>包含Markdown正文</strong>
+                    </span>
+                  </label>
+                </div>
               ) : (
                 <>
                   <div className="mindmap-sheet-selector">
@@ -582,7 +611,7 @@ function MindmapImportPage() {
                           aria-expanded={sheetPickerOpen ? "true" : "false"}
                         >
                           <span>{activeSheetLabel}</span>
-                          <span className="style-picker-caret">{sheetPickerOpen ? "▲" : "▼"}</span>
+                          <span className="style-picker-caret">{sheetPickerOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}</span>
                         </button>
 
                         {sheetPickerOpen ? (

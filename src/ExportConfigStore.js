@@ -13,14 +13,14 @@ var __MN_EXPORT_CONFIG_STORE_MNImportEverythingAddon = (function () {
       cssText: `
 :root {
   --preview-page-bg: #ffffff;
-  --preview-text-color: #182018;
-  --preview-muted-color: #687363;
-  --preview-heading-color: #122418;
-  --preview-line-color: #d9e1d8;
+  --preview-text-color: #1d2129;
+  --preview-muted-color: #6b7280;
+  --preview-heading-color: #1d2129;
+  --preview-line-color: #e5e7eb;
   --preview-block-bg: #ffffff;
-  --preview-code-bg: #142118;
-  --preview-code-color: #f3f6f2;
-  --preview-accent-color: #1f6a49;
+  --preview-code-bg: #1f2530;
+  --preview-code-color: #e7eaf0;
+  --preview-accent-color: #3b5998;
   --preview-cover-align: left;
 }
 
@@ -46,15 +46,15 @@ var __MN_EXPORT_CONFIG_STORE_MNImportEverythingAddon = (function () {
       fileName: "builtin-paper-article.css",
       cssText: `
 :root {
-  --preview-page-bg: #fffdf8;
-  --preview-text-color: #202020;
-  --preview-muted-color: #736c63;
+  --preview-page-bg: #ffffff;
+  --preview-text-color: #1d2129;
+  --preview-muted-color: #6b7280;
   --preview-heading-color: #111111;
-  --preview-line-color: #d8d1c7;
-  --preview-block-bg: #fffefc;
-  --preview-code-bg: #211d19;
-  --preview-code-color: #f6f1eb;
-  --preview-accent-color: #7f3f00;
+  --preview-line-color: #e5e7eb;
+  --preview-block-bg: #ffffff;
+  --preview-code-bg: #1f2530;
+  --preview-code-color: #e7eaf0;
+  --preview-accent-color: #3b5998;
   --preview-cover-align: center;
   --preview-body-font-stack: "Songti SC", "STSong", serif;
   --preview-heading-font-stack: "Songti SC", "STSong", serif;
@@ -78,7 +78,7 @@ var __MN_EXPORT_CONFIG_STORE_MNImportEverythingAddon = (function () {
   border-left: 3px solid var(--preview-line-color);
   margin: 0;
   padding-left: 14px;
-  color: #58524a;
+  color: #4b5563;
 }
       `.trim(),
     },
@@ -88,15 +88,15 @@ var __MN_EXPORT_CONFIG_STORE_MNImportEverythingAddon = (function () {
       fileName: "builtin-compact-reading.css",
       cssText: `
 :root {
-  --preview-page-bg: #fbfcfa;
-  --preview-text-color: #15221a;
-  --preview-muted-color: #607062;
-  --preview-heading-color: #102117;
-  --preview-line-color: #d3ddd3;
-  --preview-block-bg: #fbfcfa;
-  --preview-code-bg: #132118;
-  --preview-code-color: #eff7f1;
-  --preview-accent-color: #19543a;
+  --preview-page-bg: #ffffff;
+  --preview-text-color: #1d2129;
+  --preview-muted-color: #6b7280;
+  --preview-heading-color: #1d2129;
+  --preview-line-color: #e5e7eb;
+  --preview-block-bg: #ffffff;
+  --preview-code-bg: #1f2530;
+  --preview-code-color: #e7eaf0;
+  --preview-accent-color: #3b5998;
 }
 
 .print-block {
@@ -137,7 +137,7 @@ var __MN_EXPORT_CONFIG_STORE_MNImportEverythingAddon = (function () {
   --preview-block-bg: #ffffff;
   --preview-code-bg: #222222;
   --preview-code-color: #f7f7f7;
-  --preview-accent-color: #000000;
+  --preview-accent-color: #3b5998;
   --preview-cover-align: left;
 }
 
@@ -503,9 +503,14 @@ var __MN_EXPORT_CONFIG_STORE_MNImportEverythingAddon = (function () {
     return [
       ":root {",
       "  --preview-page-bg: #ffffff;",
-      "  --preview-text-color: #182018;",
-      "  --preview-heading-color: #122418;",
-      "  --preview-accent-color: #1f6a49;",
+      "  --preview-text-color: #1d2129;",
+      "  --preview-muted-color: #6b7280;",
+      "  --preview-heading-color: #1d2129;",
+      "  --preview-line-color: #e5e7eb;",
+      "  --preview-block-bg: #ffffff;",
+      "  --preview-code-bg: #1f2530;",
+      "  --preview-code-color: #e7eaf0;",
+      "  --preview-accent-color: #3b5998;",
       "}",
       "",
       ".content-html {",

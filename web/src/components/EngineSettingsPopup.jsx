@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { X } from "lucide-react";
 import { getAvailableEngines, getEngine } from "../engines/engineRegistry";
 
 function sourceTypeExtensionLabel(sourceType) {
@@ -68,7 +69,7 @@ export default function EngineSettingsPopup({ documents, engineSelections, onApp
         <div className="engine-popup" onClick={(e) => e.stopPropagation()}>
           <div className="engine-popup-header">
             <h3>转换引擎设置</h3>
-            <button type="button" className="button button-ghost button-small" onClick={onClose}>✕</button>
+            <button type="button" className="button button-ghost button-small icon-only-button" onClick={onClose}><X size={16} /></button>
           </div>
           <div className="engine-popup-body">
             <p className="muted-text">当前文件列表中没有支持多引擎切换的格式。</p>
@@ -86,7 +87,7 @@ export default function EngineSettingsPopup({ documents, engineSelections, onApp
       <div className="engine-popup" onClick={(e) => e.stopPropagation()}>
         <div className="engine-popup-header">
           <h3>转换引擎设置</h3>
-          <button type="button" className="button button-ghost button-small" onClick={onClose}>✕</button>
+          <button type="button" className="button button-ghost button-small icon-only-button" onClick={onClose}><X size={16} /></button>
         </div>
 
         <div className="engine-popup-tabs">
