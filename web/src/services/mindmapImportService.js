@@ -1,4 +1,5 @@
 import MNBridge from "../lib/mnBridge";
+import { blobToBase64 } from "../mindmap/imageUtils";
 
 const COMMANDS = {
   GET_CONTEXT: "getMindmapImportContext",
@@ -41,7 +42,44 @@ function shouldStripMarkdownComments(tree, options) {
     && options.includeMarkdownContent === false;
 }
 
-export function buildImportPayloadTree(tree, selectedSheetIds, options = {}) {
+// 解析阶段图片只存了 blob + blobUrl（预览便宜），真正发给插件前才转成 base64。
+function cloneNodeForPayload(node, pendingImages) {
+  if (!node || typeof node !== "object") {
+    return node;
+  }
+
+  const copy = { ...node };
+  const image = node.image;
+  if (image && typeof image === "object" && typeof image.mimeType === "string") {
+    if (typeof image.data === "string") {
+      copy.image = { mimeType: image.mimeType, data: image.data };
+    } else if (image.blob && typeof image.blob === "object") {
+      const pending = { mimeType: image.mimeType };
+      copy.image = pending;
+      pendingImages.push({ target: pending, blob: image.blob });
+    } else {
+      copy.image = null;
+    }
+  }
+
+  copy.children = Array.isArray(node.children)
+    ? node.children.map((child) => cloneNodeForPayload(child, pendingImages))
+    : [];
+
+  return copy;
+}
+
+async function materializePendingImages(pendingImages, onProgress) {
+  for (let index = 0; index < pendingImages.length; index += 1) {
+    const { target, blob } = pendingImages[index];
+    target.data = await blobToBase64(blob);
+    if (typeof onProgress === "function") {
+      onProgress({ current: index + 1, total: pendingImages.length });
+    }
+  }
+}
+
+export async function buildImportPayloadTree(tree, selectedSheetIds, options = {}) {
   if (!tree || typeof tree !== "object") {
     return tree;
   }
@@ -55,19 +93,21 @@ export function buildImportPayloadTree(tree, selectedSheetIds, options = {}) {
       ? tree.sheets.filter((sheet) => sheet && normalizedSelectedSheetIds.includes(String(sheet.id || "")))
       : tree.sheets
     : [];
-  const payloadSheets = stripMarkdownComments
-    ? filteredSheets.map((sheet) => ({
-      ...sheet,
-      root: stripMindmapNodeComments(sheet && sheet.root ? sheet.root : null),
-    }))
-    : filteredSheets;
+  const pendingImages = [];
+  const prepareRoot = (root) => cloneNodeForPayload(
+    stripMarkdownComments ? stripMindmapNodeComments(root) : root,
+    pendingImages,
+  );
+  const payloadSheets = filteredSheets.map((sheet) => (sheet && typeof sheet === "object"
+    ? { ...sheet, root: prepareRoot(sheet.root || null) }
+    : sheet));
   const payloadRoots = payloadSheets.length > 0
     ? payloadSheets.map((sheet) => (sheet && sheet.root ? sheet.root : null)).filter(Boolean)
     : Array.isArray(tree.roots)
-      ? stripMarkdownComments
-        ? tree.roots.map((root) => stripMindmapNodeComments(root))
-        : tree.roots
+      ? tree.roots.map((root) => prepareRoot(root))
       : [];
+
+  await materializePendingImages(pendingImages, options.onImageProgress);
 
   return {
     ...tree,
@@ -78,14 +118,14 @@ export function buildImportPayloadTree(tree, selectedSheetIds, options = {}) {
 
 export async function importMindmapTree(tree, selectedSheetIds, options = {}) {
   const response = await MNBridge.send(COMMANDS.IMPORT_TREE, {
-    tree: buildImportPayloadTree(tree, selectedSheetIds, options),
+    tree: await buildImportPayloadTree(tree, selectedSheetIds, options),
   });
   return ensureBridgeOk(response, COMMANDS.IMPORT_TREE);
 }
 
 export async function startMindmapImport(tree, selectedSheetIds, options = {}) {
   const response = await MNBridge.send(COMMANDS.START_IMPORT, {
-    tree: buildImportPayloadTree(tree, selectedSheetIds, options),
+    tree: await buildImportPayloadTree(tree, selectedSheetIds, options),
   });
   return ensureBridgeOk(response, COMMANDS.START_IMPORT);
 }

@@ -240,9 +240,15 @@ const MINDMAP_IMPORT_PHASE_META = {
     label: "等待导入",
     ratio: 0,
   },
+  submit: {
+    label: "准备导入数据",
+    start: 0.01,
+    end: 0.08,
+  },
   import: {
     label: "导入脑图",
-    ratio: 0,
+    start: 0.08,
+    end: 0.98,
   },
   done: {
     label: "导入完成",
@@ -250,11 +256,32 @@ const MINDMAP_IMPORT_PHASE_META = {
   },
 };
 
-export function getMindmapImportPhaseMeta(phase) {
-  return MINDMAP_IMPORT_PHASE_META[phase] || MINDMAP_IMPORT_PHASE_META.import;
-}
+const MINDMAP_PARSE_PHASE_META = {
+  idle: {
+    label: "等待解析",
+    ratio: 0,
+  },
+  read: {
+    label: "读取脑图文件",
+    start: 0.02,
+    end: 0.12,
+  },
+  structure: {
+    label: "解析脑图结构",
+    ratio: 0.2,
+  },
+  images: {
+    label: "提取图片",
+    start: 0.2,
+    end: 0.96,
+  },
+  done: {
+    label: "解析完成",
+    ratio: 1,
+  },
+};
 
-export function buildMindmapImportProgressModel(progress, fileName, isActive) {
+function buildPhaseProgressModel(phaseMetaMap, fallbackPhase, progress, fileName, isActive) {
   if (!progress && !isActive) {
     return null;
   }
@@ -265,9 +292,14 @@ export function buildMindmapImportProgressModel(progress, fileName, isActive) {
     total: 1,
     message: "",
   };
-  const phaseMeta = getMindmapImportPhaseMeta(normalized.phase);
+  const phaseMeta = phaseMetaMap[normalized.phase] || phaseMetaMap[fallbackPhase];
   const fraction = normalizeFraction(normalized.current, normalized.total);
-  let ratio = fraction !== null ? fraction : clampRatio(phaseMeta.ratio);
+  const hasRange = Number.isFinite(phaseMeta.start) && Number.isFinite(phaseMeta.end);
+  let ratio = fraction !== null && hasRange
+    ? interpolate(phaseMeta.start, phaseMeta.end, fraction)
+    : hasRange
+      ? clampRatio(phaseMeta.start)
+      : clampRatio(phaseMeta.ratio);
 
   if (normalized.phase === "done") {
     ratio = 1;
@@ -280,7 +312,24 @@ export function buildMindmapImportProgressModel(progress, fileName, isActive) {
     message: normalized.message || phaseMeta.label,
     current: Number.isFinite(normalized.current) ? normalized.current : 0,
     total: Number.isFinite(normalized.total) ? normalized.total : 1,
+    indeterminate: normalized.indeterminate === true,
   };
+}
+
+export function getMindmapImportPhaseMeta(phase) {
+  return MINDMAP_IMPORT_PHASE_META[phase] || MINDMAP_IMPORT_PHASE_META.import;
+}
+
+export function getMindmapParsePhaseMeta(phase) {
+  return MINDMAP_PARSE_PHASE_META[phase] || MINDMAP_PARSE_PHASE_META.structure;
+}
+
+export function buildMindmapImportProgressModel(progress, fileName, isActive) {
+  return buildPhaseProgressModel(MINDMAP_IMPORT_PHASE_META, "import", progress, fileName, isActive);
+}
+
+export function buildMindmapParseProgressModel(progress, fileName, isActive) {
+  return buildPhaseProgressModel(MINDMAP_PARSE_PHASE_META, "structure", progress, fileName, isActive);
 }
 
 export function formatPercent(value) {

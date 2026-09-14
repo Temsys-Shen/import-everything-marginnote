@@ -454,18 +454,13 @@ ol {
   flex-wrap: wrap;
 }
 
-.mindmap-sheet-selector {
-  display: flex;
-  justify-content: stretch;
-  flex: 1 1 320px;
-}
-
-.mindmap-sheet-select {
-  width: min(320px, 100%);
-}
-
 .mindmap-sheet-picker {
   width: 100%;
+}
+
+.mindmap-preview-head .mindmap-sheet-picker {
+  flex: 0 1 260px;
+  width: 260px;
 }
 
 .mindmap-sheet-trigger {
@@ -475,11 +470,6 @@ ol {
 .mindmap-sheet-menu {
   max-height: 320px;
   border-radius: var(--radius);
-}
-
-.mindmap-selection-summary {
-  font-size: 13px;
-  color: var(--muted);
 }
 
 .mindmap-preview-layout {
@@ -499,7 +489,6 @@ ol {
 
 .mindmap-preview-layout-single .mindmap-canvas-shell {
   min-height: 0;
-  height: 100%;
 }
 
 .mindmap-sheet-panel {
@@ -508,7 +497,17 @@ ol {
   background: var(--surface-soft);
   padding: 12px;
   display: grid;
+  align-content: start;
   gap: 10px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.mindmap-sheet-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .mindmap-sheet-panel-head h3 {
@@ -517,9 +516,21 @@ ol {
   font-weight: 600;
 }
 
+.mindmap-sheet-panel-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.mindmap-sheet-panel-count {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .mindmap-sheet-checklist {
   display: grid;
   gap: 6px;
+  min-height: 0;
+  overflow: auto;
 }
 
 .mindmap-sheet-item {
@@ -664,8 +675,8 @@ ol {
 
 .mindmap-canvas-shell {
   position: relative;
-  height: 100%;
-  min-height: 320px;
+  flex: 1 1 auto;
+  min-height: 200px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface-soft);
@@ -674,15 +685,27 @@ ol {
   user-select: none;
 }
 
+/* 工具栏在画布外的一行，避免盖住节点。 */
 .mindmap-preview-toolbar {
-  position: absolute;
-  top: 12px;
-  left: 12px;
-  z-index: 2;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .mindmap-preview-toolbar .card-actions {
   gap: 6px;
+}
+
+.mindmap-preview-lod-hint {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--muted);
+  padding: 3px 8px;
+  font-size: 11px;
 }
 
 .mindmap-canvas {
@@ -754,11 +777,39 @@ ol {
   margin-bottom: 10px;
 }
 
+.mindmap-node-card > .mindmap-node-image:last-child {
+  margin-bottom: 0;
+}
+
+/* 缩略模式下的图片占位：保持节点高度，避免缩小时解码整张图。 */
+.mindmap-node-image-placeholder {
+  border-radius: 8px;
+  background: var(--surface-soft);
+  border: 1px dashed var(--line);
+}
+
+.mindmap-node-card-root .mindmap-node-image-placeholder {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.35);
+}
+
 .mindmap-node-title {
   font-weight: 600;
   font-size: 13px;
   line-height: 1.45;
   white-space: normal;
+}
+
+/* 源文件里没有标题、也没有正文/图片的节点：预览时给一个弱化提示，
+   导入时仍然是空标题卡片。 */
+.mindmap-node-empty {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.mindmap-node-card-root .mindmap-node-empty {
+  color: rgba(255, 255, 255, 0.85);
 }
 
 .mindmap-node-markdown {
@@ -2306,7 +2357,7 @@ ol {
 
   .mindmap-preview-toolbar .card-actions {
     width: auto;
-    justify-content: flex-end;
+    justify-content: flex-start;
     flex-wrap: nowrap;
   }
 
@@ -2326,7 +2377,7 @@ ol {
   }
 
   .mindmap-preview-toolbar {
-    justify-content: flex-end;
+    justify-content: space-between;
   }
 
   .button-grow,

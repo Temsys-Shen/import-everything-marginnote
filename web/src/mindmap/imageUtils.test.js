@@ -33,6 +33,10 @@ beforeAll(() => {
     get src() { return this._src; }
   });
 
+  // jsdom 不实现 object URL，图片现在以 blob URL 形式产出。
+  URL.createObjectURL = vi.fn(() => "blob:fake-image");
+  URL.revokeObjectURL = vi.fn();
+
   if (typeof FileReader === "undefined") {
     const btoa = (str) => Buffer.from(str, "binary").toString("base64");
     vi.stubGlobal("FileReader", class {
@@ -139,8 +143,8 @@ describe("extractXmindImage", () => {
     const topic = { image: { src: "image.png" } };
     const result = await extractXmindImage(topic, zip);
     expect(result).not.toBeNull();
-    expect(typeof result.data).toBe("string");
-    expect(result.data.length).toBeGreaterThan(0);
+    expect(result.blob).toBeInstanceOf(Blob);
+    expect(result.blobUrl).toBe("blob:fake-image");
     expect(result.mimeType).toBe("image/png");
     expect(result.width).toBe(200);
     expect(result.height).toBe(150);
@@ -160,7 +164,8 @@ describe("extractXmindImage", () => {
     const result = await extractXmindImage(topic, zip);
     expect(calledPath).toBe("resources/image.png");
     expect(result).not.toBeNull();
-    expect(result.data).toBe("ZmFrZS14YXAtcG5n");
+    expect(result.blob).toBeInstanceOf(Blob);
+    expect(result.blobUrl).toBe("blob:fake-image");
     expect(result.mimeType).toBe("image/png");
     expect(result.width).toBe(200);
     expect(result.height).toBe(150);

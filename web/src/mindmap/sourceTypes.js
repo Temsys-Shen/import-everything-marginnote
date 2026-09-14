@@ -39,7 +39,7 @@ export async function parseMindmapFileBySourceType(sourceType, file, options = {
     return parseMarkdownMindmapFile(file, options);
   }
   if (sourceType === "xmind") {
-    return parseXmindMindmapFile(file);
+    return parseXmindMindmapFile(file, options);
   }
   if (sourceType === "freemind") {
     return parseFreeMindFile(file);

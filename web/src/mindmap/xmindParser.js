@@ -81,7 +81,11 @@ function extractSheetsFromUnknown(value, maxDepth = 6) {
   return [];
 }
 
-function buildTopicsById(value, maxDepth = 6) {
+// The index is only used to resolve topics that are referenced by id (or by a
+// bare id string). Every level of JSON nesting consumes one depth step, and a
+// single mindmap level costs two steps (children -> attached -> topic), so a
+// small budget silently dropped every topic deeper than the root's children.
+function buildTopicsById(value, maxDepth = 64) {
   if (!value || maxDepth <= 0) {
     return {};
   }
@@ -291,6 +295,44 @@ function extractChildTopics(topicRecord, topicsById, seen) {
   return attached;
 }
 
+function extractTopicImageRef(topicRecord) {
+  if (!isRecord(topicRecord) || !isRecord(topicRecord.image)) {
+    return null;
+  }
+
+  const src = typeof topicRecord.image.src === "string" ? topicRecord.image.src.trim() : "";
+  if (!src) {
+    return null;
+  }
+
+  const width = Number(topicRecord.image.width);
+  const height = Number(topicRecord.image.height);
+
+  return {
+    src,
+    width: Number.isFinite(width) && width > 0 ? width : 0,
+    height: Number.isFinite(height) && height > 0 ? height : 0,
+  };
+}
+
+function buildTopicSourceMeta(topicRecord, rawId) {
+  const imageRef = extractTopicImageRef(topicRecord);
+
+  return {
+    xmindTopicId: rawId || null,
+    xmindImageSrc: imageRef ? imageRef.src : "",
+    xmindImageWidth: imageRef ? imageRef.width : 0,
+    xmindImageHeight: imageRef ? imageRef.height : 0,
+    collapsed: Boolean(topicRecord.collapsed || topicRecord.folded || topicRecord.isFolded),
+  };
+}
+
+// Topic titles are optional: image-only topics intentionally keep an empty
+// title so the imported MarginNote card is created without a placeholder.
+function readTopicText(topicRecord) {
+  return String(topicRecord.title || topicRecord.text || topicRecord.name || "").trim();
+}
+
 function toMindmapImportNode(rawTopic, topicsById, seen) {
   const resolved = resolveTopicValue(rawTopic, topicsById);
   const topicRecord = isRecord(resolved) ? resolved : {};
@@ -299,10 +341,13 @@ function toMindmapImportNode(rawTopic, topicsById, seen) {
     ? String(topicRecord.id)
     : "";
 
+  const text = readTopicText(topicRecord);
+
   if (rawId) {
     if (seen.has(rawId)) {
       return createMindmapImportNode({
-        text: String(topicRecord.title || topicRecord.text || topicRecord.name || "(无标题)").trim() || "(无标题)",
+        text,
+        sourceMeta: buildTopicSourceMeta(topicRecord, rawId),
       });
     }
     seen.add(rawId);
@@ -313,7 +358,6 @@ function toMindmapImportNode(rawTopic, topicsById, seen) {
   const branchColor = extractBranchColor(topicRecord);
   const comment = normalizeNoteContent(topicRecord.notes || topicRecord.note);
   const children = extractChildTopics(topicRecord, topicsById, seen);
-  const text = String(topicRecord.title || topicRecord.text || topicRecord.name || "").trim() || "(无标题)";
 
   return createMindmapImportNode({
     id: rawId || undefined,
@@ -325,10 +369,7 @@ function toMindmapImportNode(rawTopic, topicsById, seen) {
       markers,
       branchColor,
     },
-    sourceMeta: {
-      xmindTopicId: rawId || null,
-      collapsed: Boolean(topicRecord.collapsed || topicRecord.folded || topicRecord.isFolded),
-    },
+    sourceMeta: buildTopicSourceMeta(topicRecord, rawId),
   });
 }
 
@@ -477,21 +518,67 @@ function parseLegacyXmindDocument(document, fileName, contentEntry, entryNames) 
   });
 }
 
-async function attachXmindImagesToNode(node, topicsById, zip) {
-  const topicId = node.sourceMeta && node.sourceMeta.xmindTopicId;
-  if (topicId) {
-    const topic = topicsById[topicId];
-    if (topic) {
-      const imageInfo = await extractXmindImage(topic, zip);
-      if (imageInfo) node.image = imageInfo;
+function createProgressReporter(options) {
+  const onProgress = options && typeof options.onProgress === "function" ? options.onProgress : null;
+
+  return (progress) => {
+    if (onProgress) {
+      onProgress(progress);
+    }
+  };
+}
+
+function collectImageNodes(root, collected = []) {
+  if (!root || typeof root !== "object") {
+    return collected;
+  }
+
+  const meta = root.sourceMeta || {};
+  if (typeof meta.xmindImageSrc === "string" && meta.xmindImageSrc) {
+    collected.push(root);
+  }
+
+  for (const child of root.children || []) {
+    collectImageNodes(child, collected);
+  }
+
+  return collected;
+}
+
+async function attachNodeImage(node, topicsById, zip, sourceFile) {
+  const meta = node.sourceMeta || {};
+  let imageSrc = typeof meta.xmindImageSrc === "string" ? meta.xmindImageSrc : "";
+
+  // Fall back to the id index for topics that are referenced by id instead of
+  // being inlined in the tree.
+  if (!imageSrc) {
+    const topic = meta.xmindTopicId ? topicsById[meta.xmindTopicId] : null;
+    const imageRef = extractTopicImageRef(topic);
+    if (imageRef) {
+      imageSrc = imageRef.src;
     }
   }
-  for (const child of node.children || []) {
-    await attachXmindImagesToNode(child, topicsById, zip);
+
+  if (!imageSrc) {
+    return;
+  }
+
+  const imageInfo = await extractXmindImage(imageSrc, zip, {
+    file: sourceFile,
+    // XMind records the size the author used on the canvas; reusing it avoids
+    // decoding every image only to learn its dimensions.
+    fallbackWidth: Number(meta.xmindImageWidth) || 0,
+    fallbackHeight: Number(meta.xmindImageHeight) || 0,
+  });
+
+  if (imageInfo) {
+    node.image = imageInfo;
+  } else {
+    console.log(`[ImportEverything] xmind image unresolved: ${imageSrc}`);
   }
 }
 
-async function parseModernXmindData(parsed, fileName, contentEntry, entryNames, zip) {
+async function parseModernXmindData(parsed, fileName, contentEntry, entryNames, zip, options) {
   const sheets = extractSheetsFromUnknown(parsed);
   if (sheets.length === 0) {
     throw new Error("content.json中未识别到有效sheet");
@@ -504,10 +591,9 @@ async function parseModernXmindData(parsed, fileName, contentEntry, entryNames, 
       throw new Error(`第${index + 1}个sheet缺少root topic`);
     }
 
+    // The root title is optional too: an image-only sheet still imports, the
+    // sheet title (or "Sheet N") keeps it identifiable.
     const rootNode = toMindmapImportNode(rootRef, topicsById, new Set());
-    if (!rootNode.text) {
-      throw new Error(`第${index + 1}个sheet根节点标题为空`);
-    }
 
     return createMindmapImportSheet({
       id: typeof sheet.id === "string" || typeof sheet.id === "number" ? String(sheet.id) : undefined,
@@ -519,8 +605,30 @@ async function parseModernXmindData(parsed, fileName, contentEntry, entryNames, 
     });
   });
 
-  for (const sheet of importSheets) {
-    await attachXmindImagesToNode(sheet.root, topicsById, zip);
+  const report = createProgressReporter(options);
+  const sourceFile = options && options.file ? options.file : null;
+  const imageNodes = [];
+  importSheets.forEach((sheet) => {
+    collectImageNodes(sheet.root, imageNodes);
+  });
+
+  if (imageNodes.length > 0) {
+    report({
+      phase: "images",
+      current: 0,
+      total: imageNodes.length,
+      message: `正在提取图片 0/${imageNodes.length}`,
+    });
+
+    for (let index = 0; index < imageNodes.length; index += 1) {
+      await attachNodeImage(imageNodes[index], topicsById, zip, sourceFile);
+      report({
+        phase: "images",
+        current: index + 1,
+        total: imageNodes.length,
+        message: `正在提取图片 ${index + 1}/${imageNodes.length}`,
+      });
+    }
   }
 
   return createMindmapImportTree({
@@ -537,7 +645,15 @@ async function parseModernXmindData(parsed, fileName, contentEntry, entryNames, 
   });
 }
 
-export async function parseXmindMindmapFile(file) {
+export async function parseXmindMindmapFile(file, options = {}) {
+  const report = createProgressReporter(options);
+  report({
+    phase: "read",
+    current: 0,
+    total: 1,
+    message: "正在读取脑图文件",
+  });
+
   let zip;
   try {
     zip = await JSZip.loadAsync(file);
@@ -548,6 +664,13 @@ export async function parseXmindMindmapFile(file) {
   const entryNames = Object.keys(zip.files).sort((left, right) => left.localeCompare(right, "en"));
   const contentJsonKey = findZipEntryByBaseName(entryNames, "content.json");
   if (contentJsonKey) {
+    report({
+      phase: "structure",
+      current: 0,
+      total: 1,
+      message: "正在解析脑图结构",
+    });
+
     let parsed;
     try {
       const rawText = await zip.files[contentJsonKey].async("string");
@@ -556,13 +679,30 @@ export async function parseXmindMindmapFile(file) {
       throw new Error(`content.json解析失败: ${error && error.message ? error.message : String(error)}`);
     }
 
-    return await parseModernXmindData(parsed, file.name, contentJsonKey, entryNames, zip);
+    const tree = await parseModernXmindData(parsed, file.name, contentJsonKey, entryNames, zip, {
+      ...options,
+      file,
+    });
+    report({
+      phase: "done",
+      current: 1,
+      total: 1,
+      message: "解析完成",
+    });
+    return tree;
   }
 
   const contentXmlKey = findZipEntryByBaseName(entryNames, "content.xml");
   if (!contentXmlKey) {
     throw new Error("XMind文件中未找到content.json或content.xml");
   }
+
+  report({
+    phase: "structure",
+    current: 0,
+    total: 1,
+    message: "正在解析脑图结构",
+  });
 
   let document;
   try {
@@ -572,5 +712,12 @@ export async function parseXmindMindmapFile(file) {
     throw new Error(`content.xml解析失败: ${error && error.message ? error.message : String(error)}`);
   }
 
-  return parseLegacyXmindDocument(document, file.name, contentXmlKey, entryNames);
+  const tree = parseLegacyXmindDocument(document, file.name, contentXmlKey, entryNames);
+  report({
+    phase: "done",
+    current: 1,
+    total: 1,
+    message: "解析完成",
+  });
+  return tree;
 }

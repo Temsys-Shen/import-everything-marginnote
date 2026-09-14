@@ -9,8 +9,12 @@ const IMAGE_MARGIN_BOTTOM = 10;
 const LEVEL_GAP_X = 88;
 const SIBLING_GAP_Y = 28;
 
+let layoutNodeCounter = 0;
+
+// Titles are optional (image-only topics), so an empty title must stay empty
+// instead of turning into a placeholder that would be imported verbatim.
 function getNodeTitle(topic) {
-  return String(topic && topic.text ? topic.text : "").trim() || "(无标题)";
+  return String(topic && topic.text ? topic.text : "").trim();
 }
 
 function getNodeComment(topic, includeMarkdownContent) {
@@ -21,11 +25,28 @@ function getNodeComment(topic, includeMarkdownContent) {
 }
 
 function getNodeImage(topic) {
-  if (!topic || !topic.image || typeof topic.image !== "object") return null;
-  if (typeof topic.image.data === "string" && typeof topic.image.mimeType === "string") {
-    return topic.image;
+  const image = topic && topic.image;
+  if (!image || typeof image !== "object" || typeof image.mimeType !== "string") {
+    return null;
+  }
+  // 解析阶段是 blobUrl，导入 payload 阶段是 base64，两者都要认。
+  if (typeof image.blobUrl === "string" || typeof image.data === "string") {
+    return image;
   }
   return null;
+}
+
+export function getImageSrc(image) {
+  if (!image) {
+    return "";
+  }
+  if (typeof image.blobUrl === "string" && image.blobUrl) {
+    return image.blobUrl;
+  }
+  if (typeof image.data === "string" && image.data) {
+    return `data:${image.mimeType};base64,${image.data}`;
+  }
+  return "";
 }
 
 function createNodeHtml(title, comment, isRoot, image) {
@@ -36,14 +57,16 @@ function createNodeHtml(title, comment, isRoot, image) {
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
   const commentHtml = comment ? renderMarkdownToHtml(comment) : "";
-  const imageHtml = image
-    ? `<img class="mindmap-node-image" src="data:${image.mimeType};base64,${image.data}" alt="" />`
+  const imageSrc = getImageSrc(image);
+  const imageHtml = imageSrc
+    ? `<img class="mindmap-node-image" src="${imageSrc}" alt="" />`
     : "";
   return [
     `<article class="mindmap-node-card ${isRoot ? "mindmap-node-card-root" : ""}">`,
-    `<div class="mindmap-node-title">${safeTitle}</div>`,
+    title ? `<div class="mindmap-node-title">${safeTitle}</div>` : "",
     imageHtml,
     commentHtml ? `<div class="mindmap-node-markdown content-html">${commentHtml}</div>` : "",
+    !title && !imageHtml && !commentHtml ? '<div class="mindmap-node-empty">空节点</div>' : "",
     "</article>",
   ].join("");
 }
@@ -59,9 +82,9 @@ function estimateNodeHeight(topic, includeMarkdownContent) {
   const title = getNodeTitle(topic);
   const comment = getNodeComment(topic, includeMarkdownContent);
   const image = getNodeImage(topic);
-  const titleLines = Math.max(1, Math.ceil(title.length / 19));
+  const titleLines = title ? Math.max(1, Math.ceil(title.length / 19)) : 0;
   const commentLines = comment ? Math.max(1, Math.ceil(comment.length / 28)) : 0;
-  const titleHeight = 22 + ((titleLines - 1) * 20);
+  const titleHeight = titleLines > 0 ? 22 + ((titleLines - 1) * 20) : 0;
   const commentHeight = commentLines > 0 ? 14 + (commentLines * 20) : 0;
   const imageHeight = image ? getRenderedImageHeight(image) + IMAGE_MARGIN_BOTTOM : 0;
   return Math.max(MINDMAP_X6_MIN_NODE_HEIGHT, Math.ceil(26 + imageHeight + titleHeight + commentHeight));
@@ -82,7 +105,10 @@ export function measureMindmapNodeSize(topic, options = {}) {
     };
   }
 
-  if (image) {
+  // Only markdown bodies need real measurement (KaTeX, lists, tables). Plain
+  // title/image nodes are estimated instead, so a 300+ node preview does not
+  // force one reflow per node on mount.
+  if (image || !comment) {
     return { width, height: estimateNodeHeight(topic, includeMarkdownContent) };
   }
 
@@ -115,8 +141,9 @@ function buildInternalTree(topic, options, depth = 0) {
     ...options,
     isRoot: depth === 0,
   });
+  const fallbackId = `mindmap-node-${depth}-${layoutNodeCounter++}`;
   return {
-    id: String(topic && topic.id ? topic.id : `mindmap-node-${depth}-${getNodeTitle(topic)}`),
+    id: String(topic && topic.id ? topic.id : fallbackId),
     topic,
     title: getNodeTitle(topic),
     comment: getNodeComment(topic, options.includeMarkdownContent !== false),

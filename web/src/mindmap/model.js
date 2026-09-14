@@ -15,9 +15,12 @@ function nextMindmapSheetId(prefix = "mindmap-sheet") {
 
 export function createMindmapImportNode(input = {}) {
   const rawImage = input.image;
-  const image = rawImage && typeof rawImage === "object" && typeof rawImage.data === "string" && typeof rawImage.mimeType === "string"
-    ? { mimeType: rawImage.mimeType, data: rawImage.data }
-    : null;
+  const hasUsableImage = rawImage
+    && typeof rawImage === "object"
+    && typeof rawImage.mimeType === "string"
+    && (typeof rawImage.blobUrl === "string" || typeof rawImage.data === "string");
+  // 图片来源有两种形态：预览用的 blob URL（解析阶段）与导入用的 base64。
+  const image = hasUsableImage ? { ...rawImage } : null;
 
   return {
     id: String(input.id || nextMindmapNodeId()),

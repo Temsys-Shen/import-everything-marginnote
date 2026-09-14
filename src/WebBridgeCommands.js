@@ -475,10 +475,8 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
       throw new Error(`Invalid node at ${path}`);
     }
 
+    // 标题可以为空：图片节点在源文件中就没有标题，不应拦成错误。
     const text = String(rawNode.text || "").trim();
-    if (!text) {
-      throw new Error(`Node text is required at ${path}`);
-    }
 
     const children = Array.isArray(rawNode.children)
       ? rawNode.children.map((child, index) => normalizeImportedNode(child, `${path}.children[${index}]`))
@@ -613,7 +611,14 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
   }
 
   function createImportedMindmapNote(node, notebook, document, parentNote) {
-    const note = Note.createWithTitleNotebookDocument(node.text, notebook, document);
+    let note = Note.createWithTitleNotebookDocument(node.text || "", notebook, document);
+
+    if (!note && !node.text) {
+      // 空标题的卡片允许创建；若宿主仍拒绝，退化成一个空白标题以免整棵子树丢失。
+      console.log("[ImportEverything] empty note title rejected, retrying with a blank title");
+      note = Note.createWithTitleNotebookDocument(" ", notebook, document);
+    }
+
     if (!note) {
       throw new Error(`Failed to create note for node: ${node.text}`);
     }

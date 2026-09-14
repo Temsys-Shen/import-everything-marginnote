@@ -4,9 +4,10 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 import PageTopbar from "../components/PageTopbar";
 import ProgressCard from "../components/ProgressCard";
 import MindmapFlowPreview from "../mindmap/MindmapFlowPreview";
-import { buildMindmapImportPreview } from "../mindmap/model";
+import { buildMindmapImportPreview, visitMindmapNodes } from "../mindmap/model";
 import { detectMindmapSourceType, parseMindmapFileBySourceType } from "../mindmap/sourceTypes";
-import { buildMindmapImportProgressModel } from "../progress/progressModel";
+import { revokeObjectURLsForFile } from "../parsers/objectUrlRegistry";
+import { buildMindmapImportProgressModel, buildMindmapParseProgressModel } from "../progress/progressModel";
 import { completeImportWithNotice } from "../services/exportConfigService";
 import {
   getMindmapImportContext,
@@ -63,6 +64,27 @@ function collectPreviewSheetIds(preview) {
   return preview.sheets.map((sheet) => String(sheet.id || "")).filter(Boolean);
 }
 
+function countSelectedImageNodes(tree, selectedSheetIds) {
+  const sheets = Array.isArray(tree && tree.sheets) ? tree.sheets : [];
+  const selectedIds = Array.isArray(selectedSheetIds) && selectedSheetIds.length > 0
+    ? selectedSheetIds.map((sheetId) => String(sheetId))
+    : null;
+  const selectedSheets = selectedIds
+    ? sheets.filter((sheet) => sheet && selectedIds.includes(String(sheet.id || "")))
+    : sheets;
+
+  let count = 0;
+  selectedSheets.forEach((sheet) => {
+    visitMindmapNodes(sheet && sheet.root ? sheet.root : null, (node) => {
+      if (node && node.image) {
+        count += 1;
+      }
+    });
+  });
+
+  return count;
+}
+
 function MindmapImportPage() {
   const navigate = useNavigate();
   const sheetPickerRef = useRef(null);
@@ -88,6 +110,7 @@ function MindmapImportPage() {
     message: "",
   });
   const [importProgress, setImportProgress] = useState(null);
+  const [parseProgress, setParseProgress] = useState(null);
   const [activeSheetId, setActiveSheetId] = useState("");
   const [selectedSheetIds, setSelectedSheetIds] = useState([]);
   const [sheetPickerOpen, setSheetPickerOpen] = useState(false);
@@ -95,6 +118,18 @@ function MindmapImportPage() {
   const [includeListAsChildren, setIncludeListAsChildren] = useState(true);
   const importPollTimerRef = useRef(null);
   const importTaskIdRef = useRef("");
+  // 解析出的图片用 blob URL 挂在这个文件上，换文件/离开页面时要统一回收。
+  const activeFileRef = useRef(null);
+
+  useEffect(() => {
+    activeFileRef.current = selectedFile;
+  }, [selectedFile]);
+
+  useEffect(() => () => {
+    if (activeFileRef.current) {
+      revokeObjectURLsForFile(activeFileRef.current);
+    }
+  }, []);
 
   function clearImportPolling() {
     if (importPollTimerRef.current) {
@@ -142,6 +177,8 @@ function MindmapImportPage() {
     [parseState.tree],
   );
   const isMarkdownPreview = preview && preview.tree && preview.tree.sourceType === "markdown";
+  // 只有一个画布时不需要选择面板：画布标题行已经能说明内容与规模。
+  const showSheetPanel = !!preview && !isMarkdownPreview && preview.sheets.length > 1;
 
   const activeSheet = useMemo(() => {
     if (!preview || preview.sheets.length === 0) {
@@ -163,6 +200,11 @@ function MindmapImportPage() {
   const importProgressModel = useMemo(
     () => buildMindmapImportProgressModel(importProgress, selectedFile ? selectedFile.name : "", importState.loading),
     [importProgress, importState.loading, selectedFile],
+  );
+
+  const parseProgressModel = useMemo(
+    () => buildMindmapParseProgressModel(parseProgress, selectedFile ? selectedFile.name : "", parseState.loading),
+    [parseProgress, parseState.loading, selectedFile],
   );
 
   useEffect(() => {
@@ -202,6 +244,10 @@ function MindmapImportPage() {
     const effectiveIncludeLists = override.includeListsAsChildren !== undefined
       ? override.includeListsAsChildren
       : includeListAsChildren;
+    if (activeFileRef.current && activeFileRef.current !== file) {
+      // 换文件时先回收上一份解析结果里的图片 blob URL。
+      revokeObjectURLsForFile(activeFileRef.current);
+    }
     clearImportPolling();
     setSelectedFile(file);
     if (override.includeListsAsChildren === undefined) {
@@ -214,6 +260,7 @@ function MindmapImportPage() {
       message: "",
     });
     setImportProgress(null);
+    setParseProgress(null);
 
     if (!file) {
       setStep("select");
@@ -245,10 +292,17 @@ function MindmapImportPage() {
       error: "",
       tree: null,
     });
+    setParseProgress({
+      phase: "read",
+      current: 0,
+      total: 1,
+      message: "正在读取脑图文件",
+    });
 
     try {
       const tree = await parseMindmapFileBySourceType(sourceType, file, {
         includeListsAsChildren: effectiveIncludeLists,
+        onProgress: (progress) => setParseProgress(progress),
       });
       const nextPreview = buildMindmapImportPreview(tree);
 
@@ -267,6 +321,7 @@ function MindmapImportPage() {
         error: error && error.message ? error.message : String(error),
         tree: null,
       });
+      setParseProgress(null);
       setActiveSheetId("");
       setSelectedSheetIds([]);
     }
@@ -305,6 +360,9 @@ function MindmapImportPage() {
 
   function returnToSelection() {
     clearImportPolling();
+    if (activeFileRef.current) {
+      revokeObjectURLsForFile(activeFileRef.current);
+    }
     setStep("select");
     setSelectedFile(null);
     setParseState({
@@ -318,6 +376,7 @@ function MindmapImportPage() {
       message: "",
     });
     setImportProgress(null);
+    setParseProgress(null);
     setActiveSheetId("");
     setSelectedSheetIds([]);
     setIncludeMarkdownContent(true);
@@ -363,9 +422,28 @@ function MindmapImportPage() {
       message: "",
     });
 
+    const imageCount = countSelectedImageNodes(parseState.tree, selectedSheetIds);
+    setImportProgress({
+      phase: "submit",
+      current: 0,
+      total: imageCount,
+      indeterminate: imageCount === 0,
+      message: imageCount > 0
+        ? `正在准备导入数据 0/${imageCount}`
+        : "正在准备导入数据",
+    });
+
     try {
       const startResult = await startMindmapImport(parseState.tree, selectedSheetIds, {
         includeMarkdownContent,
+        onImageProgress: ({ current, total }) => {
+          setImportProgress({
+            phase: "submit",
+            current,
+            total,
+            message: `正在准备导入数据 ${current}/${total}`,
+          });
+        },
       });
       const taskId = String(startResult.taskId || "");
       if (!taskId) {
@@ -530,7 +608,15 @@ function MindmapImportPage() {
             )}
 
             {contextState.loading ? <p className="muted-text">正在读取导入上下文…</p> : null}
-            {parseState.loading ? <p className="muted-text">正在解析脑图结构…</p> : null}
+            {parseState.loading && parseProgressModel ? (
+              <ProgressCard
+                percent={parseProgressModel.targetPercent}
+                fileName={parseProgressModel.fileName}
+                message={parseProgressModel.message}
+                indeterminate={parseProgressModel.indeterminate}
+              />
+            ) : null}
+            {parseState.loading && !parseProgressModel ? <p className="muted-text">正在解析脑图结构…</p> : null}
             {contextState.error ? <p className="error-text">{contextState.error}</p> : null}
             {parseState.error ? <p className="error-text">{parseState.error}</p> : null}
           </section>
@@ -563,8 +649,8 @@ function MindmapImportPage() {
               </div>
             </div>
 
-            <div className="mindmap-sheet-bar">
-              {isMarkdownPreview ? (
+            {isMarkdownPreview ? (
+              <div className="mindmap-sheet-bar">
                 <div className="mindmap-content-toggles">
                   <label className="mindmap-content-toggle">
                     <input
@@ -595,60 +681,36 @@ function MindmapImportPage() {
                     </span>
                   </label>
                 </div>
-              ) : (
-                <>
-                  <div className="mindmap-sheet-selector">
-                    {preview.sheets.length > 1 ? (
-                      <div
-                        ref={sheetPickerRef}
-                        className={`style-picker mindmap-sheet-picker ${sheetPickerOpen ? "style-picker-open" : ""}`}
-                      >
-                        <button
-                          type="button"
-                          className="style-picker-trigger mindmap-sheet-trigger"
-                          onClick={() => setSheetPickerOpen((current) => !current)}
-                          aria-haspopup="listbox"
-                          aria-expanded={sheetPickerOpen ? "true" : "false"}
-                        >
-                          <span>{activeSheetLabel}</span>
-                          <span className="style-picker-caret">{sheetPickerOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}</span>
-                        </button>
+              </div>
+            ) : null}
 
-                        {sheetPickerOpen ? (
-                          <div className="style-picker-menu mindmap-sheet-menu" role="listbox" aria-label="脑图sheet">
-                            {preview.sheets.map((sheet, index) => {
-                              const selected = !!activeSheet && sheet.id === activeSheet.id;
-                              return (
-                                <button
-                                  key={sheet.id}
-                                  type="button"
-                                  role="option"
-                                  aria-selected={selected ? "true" : "false"}
-                                  className={`style-picker-option ${selected ? "style-picker-option-selected" : ""}`}
-                                  onClick={() => handleSelectSheet(sheet.id)}
-                                >
-                                  <span>{`Sheet ${index + 1} · ${sheet.title}`}</span>
-                                </button>
-                              );
-                            })}
-                          </div>
-                        ) : null}
-                      </div>
-                    ) : null}
-                  </div>
-                  <div className="mindmap-selection-summary">
-                    已选{selectedSheetIds.length}个，共{preview.sheets.length}个
-                  </div>
-                </>
-              )}
-            </div>
-
-            <div className={`mindmap-preview-layout ${isMarkdownPreview ? "mindmap-preview-layout-single" : ""}`}>
-              {!isMarkdownPreview ? (
+            <div className={`mindmap-preview-layout ${showSheetPanel ? "" : "mindmap-preview-layout-single"}`}>
+              {showSheetPanel ? (
                 <aside className="mindmap-sheet-panel">
                   <div className="mindmap-sheet-panel-head">
-                    <h3>导入sheet</h3>
+                    <h3>导入画布</h3>
+                    <div className="mindmap-sheet-panel-actions">
+                      <button
+                        type="button"
+                        className="button button-ghost button-small"
+                        onClick={() => setSelectedSheetIds(collectPreviewSheetIds(preview))}
+                        disabled={selectedSheetIds.length === preview.sheets.length}
+                      >
+                        全选
+                      </button>
+                      <button
+                        type="button"
+                        className="button button-ghost button-small"
+                        onClick={() => setSelectedSheetIds([])}
+                        disabled={selectedSheetIds.length === 0}
+                      >
+                        清空
+                      </button>
+                    </div>
                   </div>
+                  <p className="mindmap-sheet-panel-count">
+                    {`已选 ${selectedSheetIds.length}/${preview.sheets.length} 个画布`}
+                  </p>
                   <div className="mindmap-sheet-checklist">
                     {preview.sheets.map((sheet, index) => {
                       const checked = selectedSheetIds.includes(sheet.id);
@@ -674,10 +736,48 @@ function MindmapImportPage() {
                 {activeSheet ? (
                   <>
                     {!isMarkdownPreview ? (
-                      <div className="section-head">
+                      <div className="section-head mindmap-preview-head">
                         <div>
                           <h2>{activeSheet.title}</h2>
+                          <p>{`${activeSheet.nodeCount} 个节点 · 深度 ${activeSheet.maxDepth}`}</p>
                         </div>
+                        {showSheetPanel ? (
+                          <div
+                            ref={sheetPickerRef}
+                            className={`style-picker mindmap-sheet-picker ${sheetPickerOpen ? "style-picker-open" : ""}`}
+                          >
+                            <button
+                              type="button"
+                              className="style-picker-trigger mindmap-sheet-trigger"
+                              onClick={() => setSheetPickerOpen((current) => !current)}
+                              aria-haspopup="listbox"
+                              aria-expanded={sheetPickerOpen ? "true" : "false"}
+                            >
+                              <span>{`预览：${activeSheetLabel}`}</span>
+                              <span className="style-picker-caret">{sheetPickerOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}</span>
+                            </button>
+
+                            {sheetPickerOpen ? (
+                              <div className="style-picker-menu mindmap-sheet-menu" role="listbox" aria-label="预览画布">
+                                {preview.sheets.map((sheet, index) => {
+                                  const selected = !!activeSheet && sheet.id === activeSheet.id;
+                                  return (
+                                    <button
+                                      key={sheet.id}
+                                      type="button"
+                                      role="option"
+                                      aria-selected={selected ? "true" : "false"}
+                                      className={`style-picker-option ${selected ? "style-picker-option-selected" : ""}`}
+                                      onClick={() => handleSelectSheet(sheet.id)}
+                                    >
+                                      <span>{`Sheet ${index + 1} · ${sheet.title}`}</span>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : null}
                       </div>
                     ) : null}
                     <MindmapFlowPreview
@@ -696,7 +796,8 @@ function MindmapImportPage() {
               <ProgressCard
                 percent={importProgressModel.targetPercent}
                 fileName={importProgressModel.fileName}
-                actionLabel={importProgressModel.actionLabel}
+                message={importProgressModel.message}
+                indeterminate={importProgressModel.indeterminate}
               />
             ) : null}
             {importState.error ? <p className="error-text">{importState.error}</p> : null}
