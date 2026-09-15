@@ -191,16 +191,35 @@ function pageFromParams(params) {
   return 1;
 }
 
+// B 站分享文案常夹带零宽字符（如 U+200B），它们会污染 b23.tv 的短码导致短链失效，
+// 而 JS 的 \s 并不覆盖这些字符，必须在提取前显式剥离。
+const INVISIBLE_CHAR_PATTERN = /[\u200B-\u200F\u202A-\u202E\u2060\uFEFF]/g;
+
+function stripInvisibleChars(value) {
+  return String(value || "").replace(INVISIBLE_CHAR_PATTERN, "");
+}
+
 function stripTrailingUrlPunctuation(value) {
   return String(value || "").replace(/[),.;!?，。；、）】》]+$/g, "");
 }
 
+function sanitizeUrlCandidate(value) {
+  return stripTrailingUrlPunctuation(stripInvisibleChars(value)).trim();
+}
+
+// 只接受绝对 http(s) 地址：桥接层转换失败时会给出 "[object NSURL]" 这类占位串，
+// 它既不能参与解析，也不该出现在报错文案里。
+function toAbsoluteHttpUrl(value) {
+  const text = sanitizeUrlCandidate(value);
+  return /^https?:\/\//i.test(text) ? text : "";
+}
+
 function extractInputCandidate(input) {
-  const s = String(input || "").trim();
+  const s = stripInvisibleChars(String(input || "")).trim();
   if (!s) return "";
 
   const urlMatch = s.match(URL_PATTERN);
-  if (urlMatch) return stripTrailingUrlPunctuation(urlMatch[0]);
+  if (urlMatch) return sanitizeUrlCandidate(urlMatch[0]);
 
   const bvMatch = s.match(BVID_PATTERN);
   if (bvMatch) return bvMatch[0];
@@ -219,6 +238,14 @@ function normalizeMediaListId(rawId) {
   const id = String(rawId || "").replace(/^ml/i, "");
   if (/^\d{1,20}$/.test(id)) return id;
   return "";
+}
+
+function videoFromQueryParams(params) {
+  const bvid = params ? params.get("bvid") : null;
+  if (bvid && BVID_EXACT_PATTERN.test(bvid)) return { type: "bvid", value: bvid, page: 1 };
+  const aid = params ? params.get("aid") : null;
+  if (aid && /^\d{1,20}$/.test(aid)) return { type: "avid", value: aid, page: 1 };
+  return null;
 }
 
 export function parseInput(input) {
@@ -252,25 +279,40 @@ export function parseInput(input) {
   if (host.endsWith("b23.tv")) {
     const bv = path.match(new RegExp(`\\/(${BVID_PATTERN.source})`));
     if (bv) return { type: "bvid", value: bv[1], page: pageFromParams(params) };
+    const av = path.match(/^\/av(\d{1,20})$/i);
+    if (av) return { type: "avid", value: av[1], page: pageFromParams(params) };
     return { type: "shortlink", value: url.toString() };
   }
 
   if (!host.endsWith("bilibili.com")) return { type: "unknown" };
 
-  // bilibili.com/video/BV1xxx or /video/av123
+  // 稍后再看需要登录态，明确归类而不是让上层报“无法识别”
+  if (path === "/watchlater" || path.startsWith("/watchlater/")) {
+    return unsupported("watchlater");
+  }
+
+  // bilibili.com/video/BV1xxx 或 /video/av123（兼容 av123.html 与 index_2.html 旧格式）
   if (path.startsWith("/video/")) {
-    const seg = path.slice(7).split("/")[0];
+    const segs = path.slice(7).split("/");
+    let seg = segs[0] || "";
+    if (/\.html$/i.test(seg)) seg = seg.slice(0, -5);
     if (BVID_EXACT_PATTERN.test(seg)) return { type: "bvid", value: seg, page: pageFromParams(params) };
     const av = seg.match(/^av(\d{1,20})$/i);
-    if (av) return { type: "avid", value: av[1], page: pageFromParams(params) };
+    if (av) {
+      const legacyPage = (segs[1] || "").match(/^index_(\d+)\.html$/i);
+      const page = legacyPage ? Number(legacyPage[1]) : pageFromParams(params);
+      return { type: "avid", value: av[1], page: page > 0 ? page : 1 };
+    }
     return { type: "unknown" };
   }
 
   // space.bilibili.com URL patterns
-  //   /{mid}              → user space
-  //   /{mid}/favlist?fid= → favorite folder
-  //   /{mid}/lists/{id}   → collection/series
-  //   /{mid}/channel/collectiondetail?sid= → legacy collection
+  //   /{mid}                                    → user space
+  //   /{mid}/favlist?fid=                       → favorite folder
+  //   /{mid}/lists/{id}?type=season|series      → collection / series
+  //   /{mid}/channel/collectiondetail?sid=      → legacy collection
+  //   /{mid}/channel/seriesdetail?sid=          → legacy series
+  //   /{mid}/video、/{mid}/upload/video          → 仍走 mid，进入空间浏览页
   if (host.endsWith("space.bilibili.com")) {
     const parts = path.split("/").filter(Boolean);
     const mid = parts[0];
@@ -299,25 +341,66 @@ export function parseInput(input) {
       }
       return { type: "mid", value: mid };
     }
-    if (action === "channel" && parts[2] && parts[2].toLowerCase() === "collectiondetail") {
+    if (action === "channel" && parts[2]) {
+      const detail = parts[2].toLowerCase();
       const sid = params.get("sid");
-      if (sid && /^\d{1,20}$/.test(sid)) return { type: "season", value: sid, mid };
-      return { type: "mid", value: mid };
+      if (detail === "collectiondetail") {
+        if (sid && /^\d{1,20}$/.test(sid)) return { type: "season", value: sid, mid };
+        return { type: "mid", value: mid };
+      }
+      if (detail === "seriesdetail") {
+        if (sid && /^\d{1,20}$/.test(sid)) return { type: "series", value: sid, mid };
+        return { type: "mid", value: mid };
+      }
     }
     return { type: "mid", value: mid };
   }
 
-  // medialist/play/{id}, medialist/detail/{id}, or list/ml{id}
-  if (path.startsWith("/medialist/play/") || path.startsWith("/medialist/detail/")) {
-    const id = normalizeMediaListId(path.split("/").pop());
-    if (id) return { type: "favorite", value: id };
+  // /list/{...}、/medialist/play/{...}、/medialist/detail/{...}
+  //   ml{media_id}                        → 收藏夹
+  //   {mid}?sid=|business_id=             → 合集或系列播放页
+  //   watchlater                          → 稍后再看
+  if (
+    path.startsWith("/list/") ||
+    path.startsWith("/medialist/play/") ||
+    path.startsWith("/medialist/detail/")
+  ) {
+    const segs = path.split("/").filter(Boolean);
+    const last = segs[segs.length - 1] || "";
+
+    if (last.toLowerCase() === "watchlater") {
+      return unsupported("watchlater");
+    }
+
+    // 只有带 ml 前缀才是收藏夹；纯数字段是 up 的 mid，不能当成 media_id
+    if (/^ml\d{1,20}$/i.test(last)) {
+      return { type: "favorite", value: normalizeMediaListId(last) };
+    }
+
+    if (/^\d{5,20}$/.test(last)) {
+      const businessId = params.get("business_id") || params.get("sid") || "";
+      if (/^\d{1,20}$/.test(businessId)) {
+        const business = (params.get("business") || "").toLowerCase();
+        const listType = (params.get("type") || "").toLowerCase();
+        if (business === "space_series" || listType === "series") {
+          return { type: "series", value: businessId, mid: last };
+        }
+        if (business === "space_season" || listType === "season") {
+          return { type: "season", value: businessId, mid: last };
+        }
+        // 合集与系列共用该 URL 结构，无参数线索时交给页面侧先合集后系列回落
+        return { type: "season", value: businessId, mid: last, fallbackSeries: true };
+      }
+      // 只有 mid、没有 sid：退回该 up 的空间浏览页
+      return { type: "mid", value: last };
+    }
+
     return { type: "unknown" };
   }
-  if (path.startsWith("/list/")) {
-    const id = normalizeMediaListId(path.split("/").pop());
-    if (id) return { type: "favorite", value: id };
-    return { type: "unknown" };
-  }
+
+  // 活动页(festival)、嵌入式播放器(player.bilibili.com)等把视频 id 放在 query 里
+  const fromQuery = videoFromQueryParams(params);
+  if (fromQuery) return fromQuery;
 
   // Fallback: search path for BVID/av
   const bv = path.match(BVID_PATTERN);
@@ -336,23 +419,41 @@ function tryURL(str) {
 
 export async function resolveBilibiliInput(input) {
   const parsed = parseInput(input);
-  if (parsed.type === "shortlink") {
-    const res = await MNBridge.send("bilibiliResolveUrl", { url: parsed.value });
-    if (!res || !res.ok) {
-      const code = res?.code ? ` ${res.code}` : "";
-      throw new Error(`B站短链解析失败${code}: ${res?.message || "未知错误"}`);
-    }
-    const finalUrl = String(res.data?.finalUrl || "").trim();
-    if (!finalUrl) {
-      throw new Error(`B站短链解析失败: 未获得最终地址 (${parsed.value})`);
-    }
-    const resolved = parseInput(finalUrl);
-    if (resolved.type === "shortlink") {
-      throw new Error(`B站短链解析失败: 最终地址仍是短链 (${finalUrl})`);
-    }
-    return resolved;
+  if (parsed.type !== "shortlink") {
+    return parsed;
   }
-  return parsed;
+
+  const res = await MNBridge.send("bilibiliResolveUrl", { url: parsed.value });
+  if (!res || !res.ok) {
+    const code = res?.code ? ` ${res.code}` : "";
+    throw new Error(`B站短链解析失败${code}: ${res?.message || "未知错误"}`);
+  }
+
+  const statusCode = Number(res.data?.statusCode || 0);
+  // 代理上报的最终地址与 Location 头互为补充：重定向未被跟随或只走了一跳时，后者才是真目标。
+  const candidates = [];
+  const finalUrl = toAbsoluteHttpUrl(res.data?.finalUrl);
+  if (finalUrl) candidates.push(finalUrl);
+  const locationUrl = toAbsoluteHttpUrl(res.data?.location);
+  if (locationUrl && locationUrl !== finalUrl) candidates.push(locationUrl);
+
+  let lastUrl = "";
+  for (const candidate of candidates) {
+    lastUrl = candidate;
+    const resolved = parseInput(candidate);
+    if (resolved.type === "shortlink") continue;
+    if (resolved.type && resolved.type !== "unknown" && resolved.type !== "empty") {
+      return resolved;
+    }
+  }
+
+  if (!candidates.length) {
+    throw new Error(`B站短链解析失败: 未获得最终地址 (${parsed.value})`);
+  }
+  if (statusCode === 412 || statusCode === 403) {
+    throw new Error(`B站短链解析被拦截 (HTTP ${statusCode}): ${lastUrl}`);
+  }
+  throw new Error(`B站短链跳转到暂不支持的页面: ${lastUrl}`);
 }
 
 export function extractBVID(input) {

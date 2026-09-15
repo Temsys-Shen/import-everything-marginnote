@@ -39,7 +39,7 @@ function fmtDuration(sec) {
   return m > 0 ? `${m}:${String(s).padStart(2, "0")}` : `0:${String(s).padStart(2, "0")}`;
 }
 
-function VideoRow({ video, checked, onToggle }) {
+function VideoRow({ video, checked, onToggle, showPageNumber }) {
   const baseTitle = getVideoTitle(video) || video.bvid || "";
   const title = video.part ? video.part + " · " + baseTitle : baseTitle;
   return (
@@ -52,12 +52,12 @@ function VideoRow({ video, checked, onToggle }) {
           loading="lazy"
           onError={(e) => { e.target.style.display = "none"; }}
         />
+        {showPageNumber && <span className="bili-video-page">{`P${video.page || 1}`}</span>}
         <span className="bili-video-dur">{fmtDuration(video.duration)}</span>
       </div>
       <div className="bili-video-meta">
         <strong>{title}</strong>
         {video.owner && <span>{video.owner.name}</span>}
-        {video.page && video.page > 1 && <span className="bili-video-page-tag">P{video.page}</span>}
       </div>
     </label>
   );
@@ -173,7 +173,10 @@ export default function VideoImportPage() {
       } else if (p.type === "mid") {
         await loadUserBrowse(p.value);
       } else if (p.type === "season") {
-        await loadCollectionVideos({ season_id: p.value, mid: p.mid, name: "B站合集" });
+        await loadCollectionVideos(
+          { season_id: p.value, mid: p.mid, name: p.fallbackSeries ? "B站合集或系列" : "B站合集" },
+          { fallbackSeries: !!p.fallbackSeries },
+        );
       } else if (p.type === "series") {
         await loadSeriesVideos({ series_id: p.value, mid: p.mid, name: "B站系列" });
       } else if (p.type === "favorite") {
@@ -291,7 +294,7 @@ export default function VideoImportPage() {
     }
   }
 
-  async function loadCollectionVideos(season) {
+  async function loadCollectionVideos(season, options = {}) {
     setLoading(true);
     setError("");
     try {
@@ -300,8 +303,29 @@ export default function VideoImportPage() {
       if (!seasonId || !mid) {
         throw new Error("B站合集缺少season_id或mid");
       }
-      setContainerInfo({ type: "seasons", label: collectionItemName(season) || "B站合集", id: seasonId });
-      const list = await fetchCollectionVideosAll(seasonId, mid);
+      let list = [];
+      let containerType = "seasons";
+      let defaultLabel = "B站合集";
+      if (options.fallbackSeries) {
+        // B站 APP 分享的合集链接不带 type 参数，合集与系列共用同一 URL 结构，取不到时按系列再试一次
+        try {
+          list = await fetchCollectionVideosAll(seasonId, mid);
+        } catch {
+          list = [];
+        }
+        if (list.length === 0) {
+          const seriesData = await fetchSeriesVideos(seasonId, mid);
+          list = seriesData?.archives || [];
+          containerType = "series";
+          defaultLabel = "B站系列";
+        }
+        if (list.length === 0) {
+          throw new Error("未找到该链接对应的合集或系列视频");
+        }
+      } else {
+        list = await fetchCollectionVideosAll(seasonId, mid);
+      }
+      setContainerInfo({ type: containerType, label: collectionItemName(season) || defaultLabel, id: seasonId });
       const expanded = await expandVideoListWithPages(list);
       setVideos(expanded);
       setSelectedBvids(buildSelectedVideoKeys(expanded));
@@ -589,58 +613,64 @@ export default function VideoImportPage() {
   // ──────── render: video list ────────
   function renderVideoList() {
     const selectedCount = selectedBvids.size;
+    // 仅当列表确实是多P展开时才编号，避免单视频列表出现无意义的 P1
+    const showPageNumbers = videos.some((v) => v.page && v.page > 1);
     return (
-      <div className="shell-content">
-        <div className="surface">
-          <div className="section-head">
-            <div>
-              <h2>{containerInfo?.label || "视频列表"}</h2>
-              <p>{videos.length} 个视频</p>
+      <>
+        <div className="shell-content">
+          <div className="surface">
+            <div className="section-head">
+              <div>
+                <h2>{containerInfo?.label || "视频列表"}</h2>
+                <p>{videos.length} 个视频</p>
+              </div>
             </div>
-          </div>
 
-          {videos.length > 0 && (
-            <label className="bili-select-all">
-              <input
-                type="checkbox"
-                checked={selectedCount === videos.length}
-                onChange={toggleSelectAll}
-              />
-              <span>全选 / 取消全选</span>
-              <span className="bili-select-count">{selectedCount} 已选</span>
-            </label>
-          )}
-
-          <div className="bili-video-list">
-            {videos.map((v) => {
-              const key = videoItemKey(v);
-              return (
-                <VideoRow
-                  key={key}
-                  video={v}
-                  checked={selectedBvids.has(key)}
-                  onToggle={() => toggleSelect(key)}
+            {videos.length > 0 && (
+              <label className="bili-select-all">
+                <input
+                  type="checkbox"
+                  checked={selectedCount === videos.length}
+                  onChange={toggleSelectAll}
                 />
-              );
-            })}
-            {videos.length === 0 && <p className="muted-text">该合集暂无视频</p>}
-          </div>
+                <span>全选 / 取消全选</span>
+                <span className="bili-select-count">{selectedCount} 已选</span>
+              </label>
+            )}
 
-          {error && <p className="error-text">{error}</p>}
-          <div className="card-actions">
-            <button
-              className="button button-primary button-grow"
-              disabled={selectedCount === 0 || loading}
-              onClick={() => {
-                const selected = videos.filter((v) => selectedBvids.has(videoItemKey(v)));
-                handleImport(selected);
-              }}
-            >
-              导入 {selectedCount > 0 ? selectedCount : ""} 个视频
-            </button>
+            <div className="bili-video-list">
+              {videos.map((v) => {
+                const key = videoItemKey(v);
+                return (
+                  <VideoRow
+                    key={key}
+                    video={v}
+                    checked={selectedBvids.has(key)}
+                    onToggle={() => toggleSelect(key)}
+                    showPageNumber={showPageNumbers}
+                  />
+                );
+              })}
+              {videos.length === 0 && <p className="muted-text">该合集暂无视频</p>}
+            </div>
+
+            {error && <p className="error-text">{error}</p>}
           </div>
         </div>
-      </div>
+
+        <footer className="action-bar">
+          <button
+            className="button button-primary button-grow"
+            disabled={selectedCount === 0 || loading}
+            onClick={() => {
+              const selected = videos.filter((v) => selectedBvids.has(videoItemKey(v)));
+              handleImport(selected);
+            }}
+          >
+            导入 {selectedCount > 0 ? selectedCount : ""} 个视频
+          </button>
+        </footer>
+      </>
     );
   }
 

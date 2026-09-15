@@ -1,4 +1,13 @@
-import { Handle, Position, ReactFlow, ReactFlowProvider, useOnViewportChange, useReactFlow } from "@xyflow/react";
+import {
+  Controls,
+  Handle,
+  Panel,
+  Position,
+  ReactFlow,
+  ReactFlowProvider,
+  useOnViewportChange,
+  useReactFlow,
+} from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
   createContext,
@@ -84,7 +93,7 @@ function MindmapFlowCanvas({ root, includeMarkdownContent = false }) {
   const [measureReady, setMeasureReady] = useState(false);
   const [showImages, setShowImages] = useState(false);
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
-  const { zoomIn, zoomOut, fitView, getViewport } = useReactFlow();
+  const { fitView, getViewport } = useReactFlow();
 
   const lodValue = useMemo(() => ({ showImages }), [showImages]);
 
@@ -207,7 +216,7 @@ function MindmapFlowCanvas({ root, includeMarkdownContent = false }) {
 
   useEffect(() => {
     fitToView();
-  }, [fitToView, nodes]);
+  }, [fitToView, nodes, containerSize.width, containerSize.height]);
 
   useEffect(() => {
     function handleResize() {
@@ -218,38 +227,9 @@ function MindmapFlowCanvas({ root, includeMarkdownContent = false }) {
     return () => window.removeEventListener("resize", handleResize);
   }, [fitToView]);
 
-  function zoomBy(factor) {
-    const options = { duration: 150 };
-    if (factor > 0) {
-      zoomIn(options);
-    } else {
-      zoomOut(options);
-    }
-  }
-
-  function handleToolbarPointerDown(event) {
-    event.stopPropagation();
-  }
-
   return (
     <MindmapPreviewLodContext.Provider value={lodValue}>
       <section className="mindmap-preview-stage">
-        <div className="mindmap-preview-toolbar" onPointerDown={handleToolbarPointerDown}>
-          <div className="card-actions">
-            <button type="button" className="button button-secondary button-small" onClick={() => zoomBy(-0.1)}>
-              缩小
-            </button>
-            <button type="button" className="button button-secondary button-small" onClick={() => zoomBy(0.1)}>
-              放大
-            </button>
-            <button type="button" className="button button-secondary button-small" onClick={fitToView}>
-              自适应
-            </button>
-          </div>
-          {showImages ? null : (
-            <span className="mindmap-preview-lod-hint">缩略模式 · 放大后显示图片</span>
-          )}
-        </div>
         <div ref={shellRef} className="mindmap-canvas-shell mindmap-flow-shell">
           <ReactFlow
             nodes={nodes}
@@ -266,7 +246,19 @@ function MindmapFlowCanvas({ root, includeMarkdownContent = false }) {
             panOnDrag
             zoomOnScroll
             proOptions={{ hideAttribution: true }}
-          />
+          >
+            <Controls
+              position="bottom-left"
+              orientation="horizontal"
+              showInteractive={false}
+              fitViewOptions={{ padding: FIT_PADDING, minZoom, maxZoom: 1 }}
+            />
+            {showImages ? null : (
+              <Panel position="top-right" className="mindmap-preview-lod-hint">
+                缩略模式 · 放大后显示图片
+              </Panel>
+            )}
+          </ReactFlow>
           <div ref={measureContainerRef} className="mindmap-node-measure" aria-hidden="true" />
         </div>
       </section>

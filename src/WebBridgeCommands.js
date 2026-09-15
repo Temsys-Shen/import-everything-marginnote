@@ -1404,6 +1404,11 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
     });
   }
 
+  // b23.tv 与 www.bilibili.com 对疑似爬虫的请求会返回 412，这里用完整的桌面 Safari UA，
+  // 避免被判定为非浏览器；代理上报的最终地址与 Location 头都交给页面侧判断。
+  const BILIBILI_WEB_PAGE_USER_AGENT =
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15";
+
   function bilibiliResolveUrl(context, payload) {
     if (!payload || typeof payload !== "object") {
       return responseFail("BILI_RESOLVE_INVALID_PAYLOAD", "payload must be an object");
@@ -1421,7 +1426,9 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
     var request = NSMutableURLRequest.requestWithURL(nsUrl);
     request.setTimeoutInterval(20);
     request.setValueForHTTPHeaderField("https://www.bilibili.com", "Referer");
-    request.setValueForHTTPHeaderField("Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X)", "User-Agent");
+    request.setValueForHTTPHeaderField(BILIBILI_WEB_PAGE_USER_AGENT, "User-Agent");
+    request.setValueForHTTPHeaderField("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", "Accept");
+    request.setValueForHTTPHeaderField("zh-CN,zh;q=0.9", "Accept-Language");
 
     return new Promise(function (resolve) {
       NSURLConnection.sendAsynchronousRequestQueueCompletionHandler(
@@ -1443,13 +1450,37 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
           var httpResponse = response;
           var statusCode = httpResponse ? httpResponse.statusCode() : 0;
           var finalUrl = "";
-          if (httpResponse && httpResponse.URL) {
-            finalUrl = String(httpResponse.URL());
+          var responseURL = httpResponse ? httpResponse.URL() : null;
+          if (!isBridgeNil(responseURL)) {
+            // NSURL 必须取 absoluteString，直接 String() 只会得到 "[object NSURL]"
+            if (responseURL.absoluteString) {
+              finalUrl = String(responseURL.absoluteString());
+            } else {
+              finalUrl = String(responseURL);
+            }
           }
+
+          // 重定向未被跟随或只走过第一跳时，Location 头是唯一可用的目标地址。
+          var locationHeader = "";
+          var headers = httpResponse ? httpResponse.allHeaderFields() : null;
+          if (headers) {
+            var rawLocation = headers["Location"] || headers["location"];
+            if (!isBridgeNil(rawLocation)) locationHeader = String(rawLocation);
+          }
+          if (locationHeader && locationHeader.charAt(0) === "/") {
+            var originMatch = url.match(/^(https?:\/\/[^\/]+)/);
+            if (originMatch) locationHeader = originMatch[1] + locationHeader;
+          }
+
+          console.log(
+            "[BiliResolve] status=" + statusCode + " final=" + finalUrl + " location=" + locationHeader,
+          );
+
           if (!finalUrl) {
             resolve(responseFail("BILI_RESOLVE_EMPTY_URL", "No final URL resolved from: " + url, {
               statusCode: statusCode,
               originalUrl: url,
+              location: locationHeader,
             }));
             return;
           }
@@ -1458,6 +1489,7 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
             statusCode: statusCode,
             originalUrl: url,
             finalUrl: finalUrl,
+            location: locationHeader,
           }));
         }
       );

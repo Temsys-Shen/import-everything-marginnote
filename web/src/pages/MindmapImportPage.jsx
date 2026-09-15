@@ -5,7 +5,7 @@ import PageTopbar from "../components/PageTopbar";
 import ProgressCard from "../components/ProgressCard";
 import MindmapFlowPreview from "../mindmap/MindmapFlowPreview";
 import { buildMindmapImportPreview, visitMindmapNodes } from "../mindmap/model";
-import { detectMindmapSourceType, parseMindmapFileBySourceType } from "../mindmap/sourceTypes";
+import { detectMindmapSourceType, parseMindmapFileBySourceType, ZIP_MINDMAP_SOURCE_TYPE_OPTIONS, detectZipMindmapSourceTypeFromFile } from "../mindmap/sourceTypes";
 import { revokeObjectURLsForFile } from "../parsers/objectUrlRegistry";
 import { buildMindmapImportProgressModel, buildMindmapParseProgressModel } from "../progress/progressModel";
 import { completeImportWithNotice } from "../services/exportConfigService";
@@ -111,6 +111,7 @@ function MindmapImportPage() {
   });
   const [importProgress, setImportProgress] = useState(null);
   const [parseProgress, setParseProgress] = useState(null);
+  const [zipFormatPrompt, setZipFormatPrompt] = useState(null);
   const [activeSheetId, setActiveSheetId] = useState("");
   const [selectedSheetIds, setSelectedSheetIds] = useState([]);
   const [sheetPickerOpen, setSheetPickerOpen] = useState(false);
@@ -287,6 +288,18 @@ function MindmapImportPage() {
       return;
     }
 
+    if (Number(file.size) === 0) {
+      setStep("select");
+      setParseState({
+        loading: false,
+        error: "由于 iOS/iPadOS 限制，请将文件后缀改为 .zip 后再尝试导入。",
+        tree: null,
+      });
+      setActiveSheetId("");
+      setSelectedSheetIds([]);
+      return;
+    }
+
     setParseState({
       loading: true,
       error: "",
@@ -299,8 +312,29 @@ function MindmapImportPage() {
       message: "正在读取脑图文件",
     });
 
+    let resolvedSourceType = override.sourceType || sourceType;
+    if (!override.sourceType && sourceType === "zip") {
+      // .zip 不区分格式：先按 zip 内容判断，判不出来再让用户选
+      try {
+        resolvedSourceType = await detectZipMindmapSourceTypeFromFile(file);
+      } catch (error) {
+        resolvedSourceType = "";
+      }
+
+      if (!resolvedSourceType) {
+        setParseState({
+          loading: false,
+          error: "",
+          tree: null,
+        });
+        setParseProgress(null);
+        setZipFormatPrompt({ file });
+        return;
+      }
+    }
+
     try {
-      const tree = await parseMindmapFileBySourceType(sourceType, file, {
+      const tree = await parseMindmapFileBySourceType(resolvedSourceType, file, {
         includeListsAsChildren: effectiveIncludeLists,
         onProgress: (progress) => setParseProgress(progress),
       });
@@ -381,6 +415,20 @@ function MindmapImportPage() {
     setSelectedSheetIds([]);
     setIncludeMarkdownContent(true);
     setIncludeListAsChildren(true);
+    setZipFormatPrompt(null);
+  }
+
+  async function onZipFormatSelected(nextSourceType) {
+    const pending = zipFormatPrompt;
+    setZipFormatPrompt(null);
+    if (!pending || !pending.file) {
+      return;
+    }
+    await handleFileSelection(pending.file, { sourceType: nextSourceType });
+  }
+
+  function onZipFormatCancelled() {
+    setZipFormatPrompt(null);
   }
 
   function onSheetSelectionChange(sheetId, checked) {
@@ -805,6 +853,35 @@ function MindmapImportPage() {
           </section>
         ) : null}
       </main>
+
+      {zipFormatPrompt ? (
+        <div className="progress-popup-layer" role="dialog" aria-modal="true" aria-label="选择脑图格式">
+          <div className="progress-popup-backdrop" onClick={onZipFormatCancelled} />
+          <section className="progress-popup-card">
+            <div className="progress-popup-head">
+              <h2>选择脑图格式</h2>
+              <p>{`无法从 ${zipFormatPrompt.file ? zipFormatPrompt.file.name : "该文件"} 的内容判断格式，请手动选择：`}</p>
+            </div>
+            <div className="zip-format-options">
+              {ZIP_MINDMAP_SOURCE_TYPE_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className="button button-secondary"
+                  onClick={() => void onZipFormatSelected(option.value)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            <div className="card-actions">
+              <button type="button" className="button button-ghost" onClick={onZipFormatCancelled}>
+                取消
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }

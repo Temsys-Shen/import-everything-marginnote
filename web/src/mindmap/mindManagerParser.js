@@ -1,4 +1,5 @@
 import JSZip from "jszip";
+import { readAsArrayBuffer } from "../parsers/utils";
 import { createMindmapImportNode, createMindmapImportSheet, createMindmapImportTree } from "./model";
 import {
   findZipEntryByBaseName,
@@ -155,9 +156,14 @@ export async function parseMindManagerFile(file) {
     });
   }
 
+  const buffer = await readAsArrayBuffer(file);
+  if (buffer.byteLength === 0) {
+    throw new Error(`文件读取为 0 字节：${file.name || "未命名文件"}（声明大小 ${Number(file.size) || 0} 字节）`);
+  }
+
   let zip;
   try {
-    zip = await JSZip.loadAsync(file);
+    zip = await JSZip.loadAsync(buffer);
   } catch (error) {
     throw new Error(`MindManager压缩包解析失败: ${error && error.message ? error.message : String(error)}`);
   }

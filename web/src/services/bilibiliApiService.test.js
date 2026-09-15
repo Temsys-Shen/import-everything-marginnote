@@ -54,9 +54,26 @@ describe("parseInput", () => {
       value: "BV1GJ411x7h7",
       page: 1,
     });
+    expect(parseInput("https://b23.tv/av80433022")).toEqual({
+      type: "avid",
+      value: "80433022",
+      page: 1,
+    });
     expect(parseInput("复制这条链接 https://b23.tv/abc123，打开看看")).toEqual({
       type: "shortlink",
       value: "https://b23.tv/abc123",
+    });
+  });
+
+  it("strips invisible characters pasted together with share text", () => {
+    expect(parseInput("https://b23.tv/W8CN0JV\u200B")).toEqual({
+      type: "shortlink",
+      value: "https://b23.tv/W8CN0JV",
+    });
+    expect(parseInput("\uFEFF这个视频BV1GJ411x7h7很好看")).toEqual({
+      type: "bvid",
+      value: "BV1GJ411x7h7",
+      page: 1,
     });
   });
 
@@ -102,6 +119,65 @@ describe("parseInput", () => {
     expect(parseInput("https://www.bilibili.com/read/cv123456")).toMatchObject({ type: "unsupported" });
     expect(parseInput("https://www.bilibili.com/cheese/play/ep123456")).toMatchObject({ type: "unsupported" });
   });
+
+  it("parses collection and series links whose path segment is the uploader mid", () => {
+    expect(parseInput("https://www.bilibili.com/list/1958703906?sid=547718")).toEqual({
+      type: "season",
+      value: "547718",
+      mid: "1958703906",
+      fallbackSeries: true,
+    });
+    expect(parseInput("https://www.bilibili.com/list/1958703906?sid=547718&oid=687146339&bvid=BV1DU4y1r7tz")).toEqual({
+      type: "season",
+      value: "547718",
+      mid: "1958703906",
+      fallbackSeries: true,
+    });
+    expect(
+      parseInput("https://www.bilibili.com/medialist/play/1958703906?business=space_series&business_id=547718&desc=1"),
+    ).toEqual({ type: "series", value: "547718", mid: "1958703906" });
+    expect(
+      parseInput("https://www.bilibili.com/medialist/play/1958703906?business=space_season&business_id=547718"),
+    ).toEqual({ type: "season", value: "547718", mid: "1958703906" });
+    expect(parseInput("https://space.bilibili.com/1958703906/channel/seriesdetail?sid=547718")).toEqual({
+      type: "series",
+      value: "547718",
+      mid: "1958703906",
+    });
+  });
+
+  it("keeps uploader space links reachable when only a mid is present", () => {
+    expect(parseInput("https://www.bilibili.com/list/1958703906")).toEqual({ type: "mid", value: "1958703906" });
+    expect(parseInput("https://space.bilibili.com/1958703906/video")).toEqual({ type: "mid", value: "1958703906" });
+  });
+
+  it("treats watchlater links as unsupported instead of unrecognized", () => {
+    expect(parseInput("https://www.bilibili.com/list/watchlater?bvid=BV1GJ411x7h7")).toMatchObject({ type: "unsupported" });
+    expect(parseInput("https://www.bilibili.com/medialist/play/watchlater")).toMatchObject({ type: "unsupported" });
+    expect(parseInput("https://www.bilibili.com/watchlater/#/av80433022")).toMatchObject({ type: "unsupported" });
+  });
+
+  it("reads video ids from query params on festival and player pages", () => {
+    expect(parseInput("https://www.bilibili.com/festival/2023honkaiimpact3gala?bvid=BV1ay4y1d77f")).toEqual({
+      type: "bvid",
+      value: "BV1ay4y1d77f",
+      page: 1,
+    });
+    expect(parseInput("https://player.bilibili.com/player.html?aid=92494333&cid=157926707&page=1")).toEqual({
+      type: "avid",
+      value: "92494333",
+      page: 1,
+    });
+  });
+
+  it("parses legacy av urls", () => {
+    expect(parseInput("https://m.bilibili.com/video/av123.html")).toEqual({ type: "avid", value: "123", page: 1 });
+    expect(parseInput("https://www.bilibili.com/video/av170001/index_2.html")).toEqual({
+      type: "avid",
+      value: "170001",
+      page: 2,
+    });
+  });
 });
 
 describe("resolveBilibiliInput", () => {
@@ -129,6 +205,80 @@ describe("resolveBilibiliInput", () => {
   it("throws bridge errors for unresolved short links", async () => {
     MNBridge.send.mockResolvedValue({ ok: false, code: "BILI_RESOLVE_ERROR", message: "network error" });
     await expect(resolveBilibiliInput("https://b23.tv/abc123")).rejects.toThrow("B站短链解析失败 BILI_RESOLVE_ERROR: network error");
+  });
+
+  it("resolves the reported share short link to its real video id", async () => {
+    MNBridge.send.mockResolvedValue({
+      ok: true,
+      data: {
+        statusCode: 200,
+        finalUrl:
+          "https://www.bilibili.com/video/BV13iDvBVENd/?buvid=XU01A7C0DC09C340710EA76A34BA63952F56A&p=1&share_source=COPY&unique_k=W8CN0JV",
+      },
+    });
+
+    await expect(resolveBilibiliInput("https://b23.tv/W8CN0JV")).resolves.toEqual({
+      type: "bvid",
+      value: "BV13iDvBVENd",
+      page: 1,
+    });
+  });
+
+  it("falls back to the Location header when redirects were not followed", async () => {
+    MNBridge.send.mockResolvedValue({
+      ok: true,
+      data: {
+        statusCode: 302,
+        finalUrl: "https://b23.tv/abc123",
+        location: "https://www.bilibili.com/video/BV1GJ411x7h7",
+      },
+    });
+
+    await expect(resolveBilibiliInput("https://b23.tv/abc123")).resolves.toEqual({
+      type: "bvid",
+      value: "BV1GJ411x7h7",
+      page: 1,
+    });
+  });
+
+  it("passes through unsupported targets instead of failing the resolve", async () => {
+    MNBridge.send.mockResolvedValue({
+      ok: true,
+      data: { statusCode: 200, finalUrl: "https://www.bilibili.com/bangumi/play/ep123456" },
+    });
+
+    await expect(resolveBilibiliInput("https://b23.tv/abc123")).resolves.toMatchObject({ type: "unsupported" });
+  });
+
+  it("reports the resolved target when the short link lands on an unsupported page", async () => {
+    MNBridge.send.mockResolvedValue({
+      ok: true,
+      data: { statusCode: 200, finalUrl: "https://www.bilibili.com/blackboard/activity-abc.html" },
+    });
+
+    await expect(resolveBilibiliInput("https://b23.tv/abc123")).rejects.toThrow(
+      "B站短链跳转到暂不支持的页面: https://www.bilibili.com/blackboard/activity-abc.html",
+    );
+  });
+
+  it("reports the http status when the short link request is blocked", async () => {
+    MNBridge.send.mockResolvedValue({
+      ok: true,
+      data: { statusCode: 412, finalUrl: "https://b23.tv/abc123", location: "https://b23.tv/abc123" },
+    });
+
+    await expect(resolveBilibiliInput("https://b23.tv/abc123")).rejects.toThrow("B站短链解析被拦截 (HTTP 412)");
+  });
+
+  it("keeps placeholder bridge values out of the resolved url and the error message", async () => {
+    MNBridge.send.mockResolvedValue({
+      ok: true,
+      data: { statusCode: 200, finalUrl: "[object NSURL]", location: "[object NSURL]" },
+    });
+
+    await expect(resolveBilibiliInput("https://b23.tv/abc123")).rejects.toThrow(
+      "B站短链解析失败: 未获得最终地址 (https://b23.tv/abc123)",
+    );
   });
 });
 

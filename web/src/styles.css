@@ -580,6 +580,7 @@ ol {
   height: 100%;
   display: flex;
   flex-direction: column;
+  gap: 10px;
 }
 
 .mindmap-preview-main > .mindmap-preview-stage {
@@ -685,20 +686,7 @@ ol {
   user-select: none;
 }
 
-/* 工具栏在画布外的一行，避免盖住节点。 */
-.mindmap-preview-toolbar {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.mindmap-preview-toolbar .card-actions {
-  gap: 6px;
-}
-
+/* 缩略模式提示：挂在 React Flow 自带的 Panel 上（右上角浮层）。 */
 .mindmap-preview-lod-hint {
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
@@ -784,13 +772,11 @@ ol {
 /* 缩略模式下的图片占位：保持节点高度，避免缩小时解码整张图。 */
 .mindmap-node-image-placeholder {
   border-radius: 8px;
-  background: var(--surface-soft);
-  border: 1px dashed var(--line);
+  background: rgba(29, 33, 41, 0.04);
 }
 
 .mindmap-node-card-root .mindmap-node-image-placeholder {
   background: rgba(255, 255, 255, 0.14);
-  border-color: rgba(255, 255, 255, 0.35);
 }
 
 .mindmap-node-title {
@@ -1017,6 +1003,12 @@ ol {
 .progress-popup-head p {
   font-size: 13px;
   color: var(--muted);
+}
+
+.zip-format-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .detail-block {
@@ -2355,12 +2347,6 @@ ol {
     width: 100%;
   }
 
-  .mindmap-preview-toolbar .card-actions {
-    width: auto;
-    justify-content: flex-start;
-    flex-wrap: nowrap;
-  }
-
   .summary-row {
     flex-direction: row;
     flex-wrap: nowrap;
@@ -2376,18 +2362,10 @@ ol {
     grid-template-columns: 1fr;
   }
 
-  .mindmap-preview-toolbar {
-    justify-content: space-between;
-  }
-
   .button-grow,
   .button,
   .count-badge {
     width: 100%;
-  }
-
-  .mindmap-preview-toolbar .button {
-    width: auto;
   }
 
   .preview-zoom-range {
@@ -2596,10 +2574,9 @@ ol {
   object-fit: cover;
 }
 
-.bili-video-dur {
+.bili-video-dur,
+.bili-video-page {
   position: absolute;
-  right: 4px;
-  bottom: 4px;
   border-radius: 4px;
   background: rgba(24, 32, 24, 0.72);
   color: #fff;
@@ -2607,6 +2584,16 @@ ol {
   font-size: 11px;
   font-weight: 600;
   line-height: 1.4;
+}
+
+.bili-video-dur {
+  right: 4px;
+  bottom: 4px;
+}
+
+.bili-video-page {
+  left: 4px;
+  top: 4px;
 }
 
 .bili-video-meta {
@@ -2628,17 +2615,6 @@ ol {
 .bili-video-meta span {
   font-size: 11px;
   color: var(--muted);
-}
-
-.bili-video-page-tag {
-  display: inline-block;
-  font-size: 10px;
-  font-weight: 600;
-  padding: 1px 5px;
-  border-radius: 4px;
-  background: var(--accent);
-  color: #fff;
-  margin-left: 4px;
 }
 
 @media print {
