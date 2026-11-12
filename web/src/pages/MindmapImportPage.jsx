@@ -481,10 +481,73 @@ function MindmapImportPage() {
         : "正在准备导入数据",
     });
 
+    async function pollTask(taskId) {
+      try {
+        const progress = await getMindmapImportProgress(taskId);
+        if (importTaskIdRef.current !== taskId) {
+          return;
+        }
+
+        setImportProgress(progress);
+
+        if (progress.phase === "done") {
+          const result = await getMindmapImportResult(taskId);
+          if (importTaskIdRef.current !== taskId) {
+            return;
+          }
+
+          clearImportPolling();
+          const successMessage = buildImportSuccessText(result);
+          setImportState({
+            loading: false,
+            error: "",
+            message: successMessage,
+          });
+          try {
+            await completeImportWithNotice(successMessage);
+          } catch (error) {
+            setImportState({
+              loading: false,
+              error: error && error.message ? `导入已完成，但收起面板或弹窗提示失败: ${error.message}` : `导入已完成，但收起面板或弹窗提示失败: ${String(error)}`,
+              message: successMessage,
+            });
+          }
+          return;
+        }
+
+        if (progress.phase === "error") {
+          clearImportPolling();
+          setImportState({
+            loading: false,
+            error: progress.error || progress.message || "脑图导入失败",
+            message: "",
+          });
+          return;
+        }
+
+        importPollTimerRef.current = window.setTimeout(() => pollTask(taskId), MINDMAP_IMPORT_POLL_MS);
+      } catch (error) {
+        if (importTaskIdRef.current !== taskId) {
+          return;
+        }
+
+        clearImportPolling();
+        setImportState({
+          loading: false,
+          error: error && error.message ? error.message : String(error),
+          message: "",
+        });
+      }
+    }
+
     try {
-      const startResult = await startMindmapImport(parseState.tree, selectedSheetIds, {
+      await startMindmapImport(parseState.tree, selectedSheetIds, {
         includeMarkdownContent,
         onImageProgress: ({ current, total }) => {
+          // 任务已经开始后以插件返回的建卡进度为准，避免进度条回退到准备阶段。
+          if (importTaskIdRef.current) {
+            return;
+          }
           setImportProgress({
             phase: "submit",
             current,
@@ -492,75 +555,18 @@ function MindmapImportPage() {
             message: `正在准备导入数据 ${current}/${total}`,
           });
         },
+        // 建卡与图片传输同时进行，任务一建立就开始轮询，进度条不会停在准备阶段。
+        onTaskStarted: (taskInfo) => {
+          const taskId = String(taskInfo && taskInfo.taskId ? taskInfo.taskId : "");
+          if (!taskId) {
+            return;
+          }
+
+          importTaskIdRef.current = taskId;
+          setImportProgress(taskInfo);
+          importPollTimerRef.current = window.setTimeout(() => pollTask(taskId), MINDMAP_IMPORT_POLL_MS);
+        },
       });
-      const taskId = String(startResult.taskId || "");
-      if (!taskId) {
-        throw new Error("Mindmap import taskId is missing");
-      }
-
-      importTaskIdRef.current = taskId;
-      setImportProgress(startResult);
-
-      const pollTask = async () => {
-        try {
-          const progress = await getMindmapImportProgress(taskId);
-          if (importTaskIdRef.current !== taskId) {
-            return;
-          }
-
-          setImportProgress(progress);
-
-          if (progress.phase === "done") {
-            const result = await getMindmapImportResult(taskId);
-            if (importTaskIdRef.current !== taskId) {
-              return;
-            }
-
-            clearImportPolling();
-            const successMessage = buildImportSuccessText(result);
-            setImportState({
-              loading: false,
-              error: "",
-              message: successMessage,
-            });
-            try {
-              await completeImportWithNotice(successMessage);
-            } catch (error) {
-              setImportState({
-                loading: false,
-                error: error && error.message ? `导入已完成，但收起面板或弹窗提示失败: ${error.message}` : `导入已完成，但收起面板或弹窗提示失败: ${String(error)}`,
-                message: successMessage,
-              });
-            }
-            return;
-          }
-
-          if (progress.phase === "error") {
-            clearImportPolling();
-            setImportState({
-              loading: false,
-              error: progress.error || progress.message || "脑图导入失败",
-              message: "",
-            });
-            return;
-          }
-
-          importPollTimerRef.current = window.setTimeout(pollTask, MINDMAP_IMPORT_POLL_MS);
-        } catch (error) {
-          if (importTaskIdRef.current !== taskId) {
-            return;
-          }
-
-          clearImportPolling();
-          setImportState({
-            loading: false,
-            error: error && error.message ? error.message : String(error),
-            message: "",
-          });
-        }
-      };
-
-      importPollTimerRef.current = window.setTimeout(pollTask, MINDMAP_IMPORT_POLL_MS);
     } catch (error) {
       clearImportPolling();
       setImportState({

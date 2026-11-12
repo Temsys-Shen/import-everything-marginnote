@@ -1,3 +1,4 @@
+import { ArrowDownRight } from "lucide-react";
 import MNBridge from "../lib/mnBridge";
 
 function PanelNotchButton() {
@@ -16,9 +17,7 @@ function PanelNotchButton() {
       title="收起插件面板"
       onClick={handleClose}
     >
-      <span className="panel-notch-chevron" aria-hidden="true">
-        &lt;
-      </span>
+      <ArrowDownRight className="panel-notch-icon" size={12} strokeWidth={2} aria-hidden="true" />
     </button>
   );
 }

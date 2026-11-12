@@ -11,6 +11,7 @@ beforeAll(() => {
   if (typeof HTMLCanvasElement !== "undefined") {
     HTMLCanvasElement.prototype.getContext = vi.fn(() => ({
       drawImage: vi.fn(),
+      fillRect: vi.fn(),
     }));
     HTMLCanvasElement.prototype.toBlob = vi.fn((cb, type) => {
       const blob = new Blob(["fake-image"], { type: type || "image/png" });

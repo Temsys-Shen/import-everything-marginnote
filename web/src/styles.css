@@ -79,33 +79,34 @@ ol {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 36px 6px 6px;
+  padding: 6px;
   background: var(--bg);
   overflow: hidden;
 }
 
 .panel-notch-button {
   position: fixed;
-  top: 0;
-  left: 50%;
+  right: 0;
+  bottom: 0;
   z-index: 80;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 80px;
-  height: 26px;
-  padding: 0;
+  align-items: flex-end;
+  justify-content: flex-end;
+  width: 32px;
+  height: 32px;
+  padding: 0 8px 8px 0;
   border: 1px solid var(--line);
-  border-top: 0;
-  border-radius: 0 0 8px 8px;
+  border-right: 0;
+  border-bottom: 0;
+  border-radius: 100% 0 0 0;
   background: rgba(255, 255, 255, 0.96);
-  box-shadow: 0 1px 4px rgba(29, 33, 41, 0.08);
+  box-shadow: -2px -2px 8px rgba(29, 33, 41, 0.08);
   color: var(--muted);
   cursor: pointer;
-  transform: translateX(-50%);
   appearance: none;
   -webkit-appearance: none;
   -webkit-tap-highlight-color: transparent;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 
 .panel-notch-button:hover {
@@ -122,14 +123,10 @@ ol {
   outline-offset: 3px;
 }
 
-.panel-notch-chevron {
+.panel-notch-icon {
   display: block;
   color: currentColor;
-  font-size: 24px;
-  font-weight: 500;
-  line-height: 1;
-  transform: rotate(-90deg) scaleX(0.5) translateX(1px);
-  transform-origin: center;
+  flex-shrink: 0;
 }
 
 .page-topbar {
@@ -2310,7 +2307,7 @@ ol {
 
 @media (max-width: 420px) {
   .app-shell {
-    padding: 38px 4px 4px;
+    padding: 4px;
   }
 
   .page-topbar {

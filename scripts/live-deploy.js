@@ -6,10 +6,23 @@ const { spawnSync } = require("child_process");
 
 const projectRoot = path.resolve(__dirname, "..");
 const pluginSrcRoot = path.join(projectRoot, "src");
-const mnAppName = "MarginNote 4";
-const mnAppPath = "/Applications/MarginNote 4.app";
+const mnAppCandidates = ["MarginNote 5", "MarginNote 4"];
 const watchPollMs = Number(process.env.MN_LIVE_POLL_MS || 1000);
 const watchDebounceMs = Number(process.env.MN_LIVE_DEBOUNCE_MS || 2000);
+
+function resolveMarginNoteApp() {
+  for (const name of mnAppCandidates) {
+    const appPath = `/Applications/${name}.app`;
+    if (fs.existsSync(appPath)) {
+      return { name: name, path: appPath };
+    }
+  }
+
+  return {
+    name: mnAppCandidates[0],
+    path: `/Applications/${mnAppCandidates[0]}.app`,
+  };
+}
 
 function readAddonConfig() {
   const addonConfigPath = path.join(projectRoot, "src", "mnaddon.json");
@@ -142,8 +155,8 @@ function syncSourceToExtension(extensionDir) {
   copyRecursiveSync(pluginSrcRoot, extensionDir);
 }
 
-function isProcessRunning() {
-  const result = spawnSync("pgrep", ["-x", mnAppName], { stdio: "ignore" });
+function isProcessRunning(appName) {
+  const result = spawnSync("pgrep", ["-x", appName], { stdio: "ignore" });
   return result.status === 0;
 }
 
@@ -165,9 +178,10 @@ async function waitUntil(conditionFn, timeoutMs, intervalMs, timeoutMessage) {
 }
 
 async function restartMarginNote() {
+  const marginNoteApp = resolveMarginNoteApp();
   console.log("[2/2] 开始重启MarginNote");
 
-  const quitResult = tryRun("osascript", ["-e", `tell application "${mnAppName}" to quit`], {
+  const quitResult = tryRun("osascript", ["-e", `tell application "${marginNoteApp.name}" to quit`], {
     stdio: "ignore",
   });
   if (!quitResult.ok) {
@@ -175,19 +189,15 @@ async function restartMarginNote() {
   }
   await delay(1000);
 
-  if (isProcessRunning()) {
-    run("killall", [mnAppName], { stdio: "ignore" });
+  if (isProcessRunning(marginNoteApp.name)) {
+    run("killall", [marginNoteApp.name], { stdio: "ignore" });
   }
 
-  await waitUntil(() => !isProcessRunning(), 20000, 250, `等待${mnAppName}退出超时`);
+  await waitUntil(() => !isProcessRunning(marginNoteApp.name), 20000, 250, `等待${marginNoteApp.name}退出超时`);
 
-  if (fs.existsSync(mnAppPath)) {
-    run("open", ["-a", mnAppPath]);
-  } else {
-    run("open", ["-a", mnAppName]);
-  }
+  run("open", ["-a", marginNoteApp.path]);
 
-  await waitUntil(() => isProcessRunning(), 20000, 250, `等待${mnAppName}启动超时`);
+  await waitUntil(() => isProcessRunning(marginNoteApp.name), 20000, 250, `等待${marginNoteApp.name}启动超时`);
 }
 
 async function deployOnce(extensionDir) {

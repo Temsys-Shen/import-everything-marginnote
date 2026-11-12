@@ -1,36 +1,109 @@
 import { registerObjectURLForFile } from "../parsers/objectUrlRegistry";
 
-const MAX_IMAGE_SIZE = 1_000_000;
+// 导入的图片会以 base64 走 bridge，单张体积直接决定整体耗时。
+// 卡片上的图片按卡片宽度显示，1600 像素长边已经足够，质量从高到低逐级试。
+const MAX_IMAGE_EDGE = 1600;
+const MAX_IMAGE_SIZE = 220_000;
 
-const JPEG_QUALITIES = [0.85, 0.7, 0.55, 0.4, 0.25, 0.1];
+const JPEG_QUALITIES = [0.88, 0.8, 0.72, 0.64, 0.56, 0.48];
 
-export async function compressImage(blob) {
-  if (blob.size <= MAX_IMAGE_SIZE) return blob;
+function decodeImageSource(blob) {
+  if (typeof createImageBitmap === "function") {
+    return createImageBitmap(blob);
+  }
 
-  const bitmap = await createImageBitmap(blob);
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(blob);
+    const image = new Image();
+    image.onload = () => {
+      safeRevokeObjectURL(url);
+      resolve(image);
+    };
+    image.onerror = () => {
+      safeRevokeObjectURL(url);
+      reject(new Error("image decode failed"));
+    };
+    image.src = url;
+  });
+}
+
+function canvasToBlob(canvas, mimeType, quality) {
+  return new Promise((resolve) => {
+    canvas.toBlob(resolve, mimeType, quality);
+  });
+}
+
+// 解析阶段只处理超大图片，保证预览尽快出现；导入阶段再用默认的紧凑参数整体压缩。
+export const PARSE_IMAGE_LIMITS = {
+  maxEdge: 4096,
+  maxSize: 1_000_000,
+};
+
+export async function compressImage(blob, options = {}) {
+  if (!blob || typeof blob !== "object" || typeof blob.size !== "number") {
+    return blob;
+  }
+
+  const maxEdge = Number(options.maxEdge) > 0 ? Number(options.maxEdge) : MAX_IMAGE_EDGE;
+  const maxSize = Number(options.maxSize) > 0 ? Number(options.maxSize) : MAX_IMAGE_SIZE;
+
+  let headerSize = null;
   try {
-    const scale = Math.sqrt(MAX_IMAGE_SIZE / blob.size);
-    const width = Math.round(bitmap.width * scale);
-    const height = Math.round(bitmap.height * scale);
+    headerSize = readImageSizeFromBytes(await readBlobHeader(blob));
+  } catch (error) {
+    headerSize = null;
+  }
+
+  const headerEdge = headerSize ? Math.max(headerSize.width, headerSize.height) : 0;
+  if (blob.size <= maxSize && (headerEdge <= 0 || headerEdge <= maxEdge)) {
+    return blob;
+  }
+
+  let source = null;
+  try {
+    source = await decodeImageSource(blob);
+  } catch (error) {
+    console.log(`[ImportEverything] image decode failed: ${String(error)}`);
+    return blob;
+  }
+
+  try {
+    const sourceWidth = source.width || source.naturalWidth || 0;
+    const sourceHeight = source.height || source.naturalHeight || 0;
+    if (!sourceWidth || !sourceHeight) {
+      return blob;
+    }
+
+    let scale = Math.min(1, maxEdge / Math.max(sourceWidth, sourceHeight));
+    if (blob.size > maxSize) {
+      scale = Math.min(scale, Math.sqrt(maxSize / blob.size));
+    }
+
+    const width = Math.max(1, Math.round(sourceWidth * scale));
+    const height = Math.max(1, Math.round(sourceHeight * scale));
 
     const canvas = document.createElement("canvas");
     canvas.width = width;
     canvas.height = height;
     const ctx = canvas.getContext("2d");
-    ctx.drawImage(bitmap, 0, 0, width, height);
+    // JPEG 不带透明通道，先铺白底，避免透明截图变黑。
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, width, height);
+    ctx.drawImage(source, 0, 0, width, height);
 
-    for (const q of JPEG_QUALITIES) {
-      const result = await new Promise((resolve) => {
-        canvas.toBlob(resolve, "image/jpeg", q);
-      });
-      if (result && result.size <= MAX_IMAGE_SIZE) return result;
+    let result = null;
+    for (const quality of JPEG_QUALITIES) {
+      result = await canvasToBlob(canvas, "image/jpeg", quality);
+      if (result && result.size <= maxSize) {
+        break;
+      }
     }
 
-    return new Promise((resolve) => {
-      canvas.toBlob(resolve, "image/jpeg", 0.1);
-    });
+    return result && result.size < blob.size ? result : blob;
   } finally {
-    bitmap.close();
+    if (source && typeof source.close === "function") {
+      source.close();
+    }
   }
 }
 
@@ -255,19 +328,6 @@ function parseBase64DataUri(src) {
   };
 }
 
-function readImageSizeFromBase64(base64) {
-  try {
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let index = 0; index < binary.length; index += 1) {
-      bytes[index] = binary.charCodeAt(index);
-    }
-    return readImageSizeFromBytes(bytes.buffer);
-  } catch (error) {
-    return null;
-  }
-}
-
 // 只取图片开头几 KB 用于读头部，避免把整张图都拷一遍。
 function readBlobHeader(blob, byteLength = 4096) {
   const slice = typeof blob.slice === "function" ? blob.slice(0, byteLength) : blob;
@@ -333,10 +393,9 @@ export async function extractXmindImage(source, zip, options = {}) {
       console.log("[ImportEverything] unsupported inline xmind image src");
       return null;
     }
-    return createImageInfo(base64ToBlob(parsed.mimeType, parsed.data), parsed.mimeType, {
-      ...sharedOptions,
-      precomputedSize: readImageSizeFromBase64(parsed.data),
-    });
+    const rawBlob = base64ToBlob(parsed.mimeType, parsed.data);
+    const blob = await compressImage(rawBlob, PARSE_IMAGE_LIMITS);
+    return createImageInfo(blob, blob.type || parsed.mimeType, sharedOptions);
   }
 
   const entry = buildZipEntryCandidates(src)
@@ -347,7 +406,7 @@ export async function extractXmindImage(source, zip, options = {}) {
   }
 
   const rawBlob = await entry.async("blob");
-  const blob = await compressImage(rawBlob);
+  const blob = await compressImage(rawBlob, PARSE_IMAGE_LIMITS);
 
   return createImageInfo(blob, blob.type || "image/png", sharedOptions);
 }

@@ -6,6 +6,8 @@ var __MN_WEB_API_MNImportEverythingAddon = (function () {
 
   const PANEL_ANIMATION_DURATION = 0.24;
   const PANEL_ANIMATION_KEY = "mn-import-everything-panel-slide";
+  const PANEL_ANIMATION_X_KEY = `${PANEL_ANIMATION_KEY}.x`;
+  const PANEL_ANIMATION_Y_KEY = `${PANEL_ANIMATION_KEY}.y`;
 
   function evaluateScript(webView, script) {
     webView.evaluateJavaScript(script, null);
@@ -101,7 +103,8 @@ var __MN_WEB_API_MNImportEverythingAddon = (function () {
 
   function finishCloseWindow(controller) {
     controller.view.hidden = true;
-    controller.view.layer.removeAnimationForKey(PANEL_ANIMATION_KEY);
+    controller.view.layer.removeAnimationForKey(PANEL_ANIMATION_X_KEY);
+    controller.view.layer.removeAnimationForKey(PANEL_ANIMATION_Y_KEY);
     if (controller.view.superview) {
       controller.view.removeFromSuperview();
     }
@@ -120,24 +123,33 @@ var __MN_WEB_API_MNImportEverythingAddon = (function () {
   function getPanelHiddenCenter(controller) {
     const frame = controller.view.frame;
     return {
-      x: frame.x + frame.width / 2,
+      x: frame.x + frame.width + frame.width / 2,
       y: frame.y + frame.height + frame.height / 2,
     };
   }
 
-  function createSlideAnimation(fromCenter, toCenter) {
-    const animation = CABasicAnimation.animationWithKeyPath("position.y");
-    animation.fromValue = fromCenter.y;
-    animation.toValue = toCenter.y;
+  function createSlideAnimation(keyPath, fromValue, toValue) {
+    const animation = CABasicAnimation.animationWithKeyPath(keyPath);
+    animation.fromValue = fromValue;
+    animation.toValue = toValue;
     animation.duration = PANEL_ANIMATION_DURATION;
     animation.timingFunction = CAMediaTimingFunction.functionWithName("easeInEaseOut");
     return animation;
   }
 
   function animatePanelToCenter(controller, fromCenter, toCenter, completion) {
-    controller.view.layer.removeAnimationForKey(PANEL_ANIMATION_KEY);
+    const layer = controller.view.layer;
+    layer.removeAnimationForKey(PANEL_ANIMATION_X_KEY);
+    layer.removeAnimationForKey(PANEL_ANIMATION_Y_KEY);
     controller.view.center = toCenter;
-    controller.view.layer.addAnimationForKey(createSlideAnimation(fromCenter, toCenter), PANEL_ANIMATION_KEY);
+    layer.addAnimationForKey(
+      createSlideAnimation("position.x", fromCenter.x, toCenter.x),
+      PANEL_ANIMATION_X_KEY,
+    );
+    layer.addAnimationForKey(
+      createSlideAnimation("position.y", fromCenter.y, toCenter.y),
+      PANEL_ANIMATION_Y_KEY,
+    );
 
     if (completion) {
       NSTimer.scheduledTimerWithTimeInterval(PANEL_ANIMATION_DURATION, false, completion);

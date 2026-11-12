@@ -564,52 +564,6 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
     return sheets;
   }
 
-  function countImportedNodes(node) {
-    if (!node) {
-      return 0;
-    }
-
-    return 1 + node.children.reduce(function (sum, child) {
-      return sum + countImportedNodes(child);
-    }, 0);
-  }
-
-  function flattenImportedSheetNodes(sheet, rootParentNote, flattened, parentPlanIndex) {
-    const planIndex = flattened.length;
-    flattened.push({
-      index: planIndex,
-      node: sheet.root,
-      parentPlanIndex: parentPlanIndex,
-      rootParentNote: rootParentNote,
-      sheetIndex: sheet.sheetIndex,
-      sheetTitle: sheet.title,
-      isLastInSheet: false,
-    });
-
-    sheet.root.children.forEach(function (child) {
-      flattenImportedChildNode(child, sheet, flattened, planIndex);
-    });
-
-    flattened[flattened.length - 1].isLastInSheet = true;
-  }
-
-  function flattenImportedChildNode(node, sheet, flattened, parentPlanIndex) {
-    const planIndex = flattened.length;
-    flattened.push({
-      index: planIndex,
-      node: node,
-      parentPlanIndex: parentPlanIndex,
-      rootParentNote: null,
-      sheetIndex: sheet.sheetIndex,
-      sheetTitle: sheet.title,
-      isLastInSheet: false,
-    });
-
-    node.children.forEach(function (child) {
-      flattenImportedChildNode(child, sheet, flattened, planIndex);
-    });
-  }
-
   function createImportedMindmapNote(node, notebook, document, parentNote) {
     let note = Note.createWithTitleNotebookDocument(node.text || "", notebook, document);
 
@@ -662,35 +616,90 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
     };
   }
 
-  function buildMindmapImportPlan(current, tree) {
-    const sheets = normalizeImportedSheets(tree);
-    const totalNodes = sheets.reduce(function (sum, sheet) {
-      return sum + countImportedNodes(sheet.root);
-    }, 0);
-    const flattened = [];
+  // 图像与节点分多批送到，插件侧按批入队、按时间片建卡。
+  // 单条 bridge 消息只承载有限的节点与图片，避免 UIWebView 处理超长 URL。
+  const MINDMAP_IMPORT_MAX_ITEMS_PER_TICK = 8;
+  const MINDMAP_IMPORT_TIME_BUDGET_MS = 40;
+  const MINDMAP_IMPORT_INPUT_TIMEOUT_MS = 5 * 60 * 1000;
+  const mindmapImportContexts = {};
 
-    sheets.forEach(function (sheet) {
-      flattenImportedSheetNodes(sheet, current.targetNote, flattened, null);
-    });
+  function normalizeImportedPlanItem(rawItem, path) {
+    if (!rawItem || typeof rawItem !== "object") {
+      throw new Error(`Invalid import item at ${path}`);
+    }
+
+    const index = Number(rawItem.index);
+    if (!Number.isFinite(index) || index < 0) {
+      throw new Error(`Invalid item index at ${path}`);
+    }
+
+    const rawParentIndex = rawItem.parentIndex;
+    const parentIndex = rawParentIndex === null || rawParentIndex === undefined
+      ? null
+      : Number(rawParentIndex);
+    if (parentIndex !== null && (!Number.isFinite(parentIndex) || parentIndex < 0 || parentIndex >= index)) {
+      throw new Error(`Invalid parentIndex at ${path}`);
+    }
+
+    const node = normalizeImportedNode({
+      text: rawItem.text,
+      comment: rawItem.comment,
+      style: rawItem.style,
+      image: rawItem.image,
+    }, `${path}.node`);
 
     return {
-      sheets: sheets,
-      flattened: flattened,
-      totalNodes: totalNodes,
+      index: index,
+      parentIndex: parentIndex,
+      node: node,
+      sheetIndex: Number.isFinite(Number(rawItem.sheetIndex)) ? Number(rawItem.sheetIndex) : 0,
+      sheetTitle: String(rawItem.sheetTitle || ""),
+      isLastInSheet: rawItem.isLastInSheet === true,
     };
   }
 
-  function processMindmapImportBatch(task, importContext, batchSize) {
-    const limit = Number(batchSize || 25);
+  function pruneMindmapImportContexts() {
+    Object.keys(mindmapImportContexts).forEach(function (taskId) {
+      try {
+        __MN_MINDMAP_IMPORT_TASK_STORE_MNImportEverythingAddon.getTaskProgress(taskId);
+      } catch (error) {
+        delete mindmapImportContexts[taskId];
+      }
+    });
+  }
+
+  function finishMindmapImportTask(task, importContext) {
+    appInstance().refreshAfterDBChanged(importContext.current.notebookId);
+    if (importContext.createdRootNotes.length > 0) {
+      importContext.current.studyController.focusNoteInMindMapById(importContext.createdRootNotes[0].noteId);
+    }
+
+    const successMessage = `脑图导入完成，共创建${importContext.createdNotes.length}个节点`;
+    const result = buildMindmapImportResult(
+      importContext.current,
+      importContext.createdNotes,
+      importContext.createdRootNotes,
+    );
+    __MN_MINDMAP_IMPORT_TASK_STORE_MNImportEverythingAddon.completeTask(task.taskId, result, successMessage);
+    delete mindmapImportContexts[task.taskId];
+  }
+
+  function processMindmapImportQueue(task) {
+    const importContext = mindmapImportContexts[task.taskId];
+    if (!importContext) {
+      return;
+    }
+
+    const startedAt = Date.now();
     let processed = 0;
 
-    while (processed < limit && importContext.nextPlanIndex < importContext.flattened.length) {
-      const planItem = importContext.flattened[importContext.nextPlanIndex];
-      const parentNote = planItem.parentPlanIndex === null
-        ? planItem.rootParentNote
-        : importContext.createdNotesByPlanIndex[planItem.parentPlanIndex];
+    while (importContext.queueOffset < importContext.queue.length) {
+      const planItem = importContext.queue[importContext.queueOffset];
+      const parentNote = planItem.parentIndex === null
+        ? importContext.current.targetNote
+        : importContext.createdNotesByPlanIndex[planItem.parentIndex];
 
-      if (planItem.parentPlanIndex !== null && !parentNote) {
+      if (planItem.parentIndex !== null && !parentNote) {
         throw new Error(`Missing parent note for plan item ${planItem.index}`);
       }
 
@@ -704,90 +713,147 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
       importContext.createdNotes.push(createdNote);
       importContext.createdNotesByPlanIndex[planItem.index] = createdNote;
 
-      if (planItem.parentPlanIndex === null) {
+      if (planItem.parentIndex === null) {
         importContext.createdRootNotes.push(createdNote);
       }
 
-      importContext.nextPlanIndex += 1;
-      processed += 1;
-
-      const nextCurrent = importContext.nextPlanIndex;
-      const finishedSheetCount = planItem.isLastInSheet
-        ? planItem.sheetIndex + 1
-        : importContext.finishedSheetCount;
-      importContext.finishedSheetCount = finishedSheetCount;
-
-      __MN_MINDMAP_IMPORT_TASK_STORE_MNImportEverythingAddon.updateTask(task.taskId, {
-        current: nextCurrent,
-        createdCount: importContext.createdNotes.length,
-        finishedSheetCount: finishedSheetCount,
-        currentSheetTitle: planItem.sheetTitle,
-        currentSheetIndex: planItem.sheetIndex,
-        message: `正在导入脑图 ${nextCurrent}/${importContext.totalNodes}`,
-      });
-    }
-
-    if (importContext.nextPlanIndex >= importContext.flattened.length) {
-      appInstance().refreshAfterDBChanged(importContext.current.notebookId);
-      if (importContext.createdRootNotes.length > 0) {
-        importContext.current.studyController.focusNoteInMindMapById(importContext.createdRootNotes[0].noteId);
+      if (planItem.isLastInSheet) {
+        importContext.finishedSheetCount = planItem.sheetIndex + 1;
       }
 
-      const successMessage = `脑图导入完成，共创建${importContext.createdNotes.length}个节点`;
-      const result = buildMindmapImportResult(
-        importContext.current,
-        importContext.createdNotes,
-        importContext.createdRootNotes,
-      );
-      __MN_MINDMAP_IMPORT_TASK_STORE_MNImportEverythingAddon.completeTask(task.taskId, result, successMessage);
+      importContext.queueOffset += 1;
+      processed += 1;
+
+      __MN_MINDMAP_IMPORT_TASK_STORE_MNImportEverythingAddon.updateTask(task.taskId, {
+        current: planItem.index + 1,
+        createdCount: importContext.createdNotes.length,
+        finishedSheetCount: importContext.finishedSheetCount,
+        currentSheetTitle: planItem.sheetTitle,
+        currentSheetIndex: planItem.sheetIndex,
+        message: `正在导入脑图 ${planItem.index + 1}/${task.total}`,
+      });
+
+      // 带图片的节点开销远高于纯文本节点，按时间片让步，保证进度轮询能返回。
+      if (processed >= MINDMAP_IMPORT_MAX_ITEMS_PER_TICK) {
+        break;
+      }
+      if (processed > 0 && Date.now() - startedAt >= MINDMAP_IMPORT_TIME_BUDGET_MS) {
+        break;
+      }
+    }
+
+    if (importContext.queueOffset > 256) {
+      importContext.queue = importContext.queue.slice(importContext.queueOffset);
+      importContext.queueOffset = 0;
+    }
+
+    if (
+      !importContext.inputComplete
+      && importContext.queueOffset >= importContext.queue.length
+      && Date.now() - importContext.lastActivityAt > MINDMAP_IMPORT_INPUT_TIMEOUT_MS
+    ) {
+      // 面板中途关闭时不再有新的批次，及时结束任务，避免长期占用内存。
+      delete mindmapImportContexts[task.taskId];
+      throw new Error("脑图导入数据接收超时");
+    }
+
+    if (importContext.inputComplete && importContext.queueOffset >= importContext.queue.length) {
+      finishMindmapImportTask(task, importContext);
     }
   }
 
-  function startMindmapImport(context, payload) {
-    validatePayloadObject(payload, "startMindmapImport");
-    if (!payload.tree || typeof payload.tree !== "object") {
-      throw new Error("tree is required");
-    }
+  function beginMindmapImport(context, payload) {
+    validatePayloadObject(payload, "beginMindmapImport");
+    pruneMindmapImportContexts();
 
     const current = currentMindmapImportContext(context);
-    const plan = buildMindmapImportPlan(current, payload.tree);
-    const firstSheet = plan.sheets[0] || null;
+    const totalNodes = Math.max(0, Number(payload.totalNodes || 0) || 0);
+    const firstSheetTitle = String(payload.firstSheetTitle || "");
+
     const taskInfo = __MN_MINDMAP_IMPORT_TASK_STORE_MNImportEverythingAddon.createTask({
       current: 0,
-      total: plan.totalNodes,
-      message: `正在导入脑图 0/${plan.totalNodes}`,
-      currentSheetTitle: firstSheet ? firstSheet.title : "",
-      currentSheetIndex: firstSheet ? firstSheet.sheetIndex : -1,
+      total: totalNodes,
+      message: `正在导入脑图 0/${totalNodes}`,
+      currentSheetTitle: firstSheetTitle,
+      currentSheetIndex: 0,
     });
-    const batchSize = 25;
 
-    const importContext = {
+    mindmapImportContexts[taskInfo.taskId] = {
       current: current,
-      sheets: plan.sheets,
-      flattened: plan.flattened,
-      totalNodes: plan.totalNodes,
-      nextPlanIndex: 0,
+      queue: [],
+      queueOffset: 0,
       finishedSheetCount: 0,
       createdNotes: [],
       createdRootNotes: [],
       createdNotesByPlanIndex: {},
+      inputComplete: false,
+      lastActivityAt: Date.now(),
     };
 
     __MN_MINDMAP_IMPORT_TASK_STORE_MNImportEverythingAddon.startTask(taskInfo.taskId, function (task) {
-      processMindmapImportBatch(task, importContext, batchSize);
+      processMindmapImportQueue(task);
     });
 
-    return responseOk("START_MINDMAP_IMPORT_OK", "Mindmap import task started", {
-      taskId: taskInfo.taskId,
-      phase: taskInfo.phase,
-      current: taskInfo.current,
-      total: taskInfo.total,
-      message: taskInfo.message,
-      createdCount: taskInfo.createdCount,
-      finishedSheetCount: taskInfo.finishedSheetCount,
-      currentSheetTitle: taskInfo.currentSheetTitle,
-      currentSheetIndex: taskInfo.currentSheetIndex,
-      resultReady: taskInfo.resultReady,
+    return responseOk("BEGIN_MINDMAP_IMPORT_OK", "Mindmap import task started", taskInfo);
+  }
+
+  function appendMindmapImportBatch(context, payload) {
+    validatePayloadObject(payload, "appendMindmapImportBatch");
+    const taskId = String(payload.taskId || "");
+    const importContext = mindmapImportContexts[taskId];
+    if (!importContext) {
+      throw new Error(`Mindmap import task not found: ${taskId}`);
+    }
+
+    const items = Array.isArray(payload.items) ? payload.items : [];
+    items.forEach(function (rawItem, index) {
+      importContext.queue.push(normalizeImportedPlanItem(rawItem, `items[${index}]`));
+    });
+    importContext.lastActivityAt = Date.now();
+
+    return responseOk("APPEND_MINDMAP_IMPORT_BATCH_OK", "Mindmap import batch accepted", {
+      taskId: taskId,
+      received: items.length,
+      queued: importContext.queue.length - importContext.queueOffset,
+    });
+  }
+
+  function finishMindmapImport(context, payload) {
+    validatePayloadObject(payload, "finishMindmapImport");
+    const taskId = String(payload.taskId || "");
+    const importContext = mindmapImportContexts[taskId];
+    if (!importContext) {
+      throw new Error(`Mindmap import task not found: ${taskId}`);
+    }
+
+    importContext.inputComplete = true;
+    return responseOk("FINISH_MINDMAP_IMPORT_OK", "Mindmap import input completed", {
+      taskId: taskId,
+      queued: importContext.queue.length - importContext.queueOffset,
+    });
+  }
+
+  function abortMindmapImport(context, payload) {
+    validatePayloadObject(payload, "abortMindmapImport");
+    const taskId = String(payload.taskId || "");
+    const importContext = mindmapImportContexts[taskId];
+    if (!importContext) {
+      return responseOk("ABORT_MINDMAP_IMPORT_OK", "Mindmap import task already finished", {
+        taskId: taskId,
+      });
+    }
+
+    try {
+      __MN_MINDMAP_IMPORT_TASK_STORE_MNImportEverythingAddon.failTask(
+        taskId,
+        new Error(String(payload.message || "脑图导入已中止")),
+      );
+    } finally {
+      delete mindmapImportContexts[taskId];
+    }
+
+    return responseOk("ABORT_MINDMAP_IMPORT_OK", "Mindmap import task aborted", {
+      taskId: taskId,
     });
   }
 
@@ -799,6 +865,9 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
     }
 
     const task = __MN_MINDMAP_IMPORT_TASK_STORE_MNImportEverythingAddon.getTaskProgress(taskId);
+    if (task.phase === "done" || task.phase === "error") {
+      delete mindmapImportContexts[taskId];
+    }
     return responseOk("GET_MINDMAP_IMPORT_PROGRESS_OK", "Mindmap import progress loaded", task);
   }
 
@@ -1707,7 +1776,10 @@ var __MN_WEB_BRIDGE_COMMANDS_MNImportEverythingAddon = (function () {
     deleteFontFile: wrapCommand("deleteFontFile", deleteFontFile),
     showAlertMessage: wrapCommand("showAlertMessage", showAlertMessage),
     getMindmapImportContext: wrapCommand("getMindmapImportContext", getMindmapImportContext),
-    startMindmapImport: wrapCommand("startMindmapImport", startMindmapImport),
+    beginMindmapImport: wrapCommand("beginMindmapImport", beginMindmapImport),
+    appendMindmapImportBatch: wrapCommand("appendMindmapImportBatch", appendMindmapImportBatch),
+    finishMindmapImport: wrapCommand("finishMindmapImport", finishMindmapImport),
+    abortMindmapImport: wrapCommand("abortMindmapImport", abortMindmapImport),
     getMindmapImportProgress: wrapCommand("getMindmapImportProgress", getMindmapImportProgress),
     getMindmapImportResult: wrapCommand("getMindmapImportResult", getMindmapImportResult),
     importMindmapTree: wrapCommand("importMindmapTree", importMindmapTree),
